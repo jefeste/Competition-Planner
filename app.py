@@ -4,7 +4,7 @@ import matplotlib.dates as mdates
 from datetime import datetime, timedelta
 
 # ==========================================
-# 1. LOGIQUE DE CALCUL (MOTEUR IDENTIQUE)
+# 1. LOGIQUE DE CALCUL 
 # ==========================================
 
 def verifier_conflit_individuel(candidat_start, schedule_existant, params):
