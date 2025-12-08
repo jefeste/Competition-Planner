@@ -5,6 +5,7 @@ Eventing Planner is a  tool  to automate and visualize the scheduling of Eventin
 
 # Live Demo
 Web App : https://complet.streamlit.app
+Clic "Yes, get this app back up" to launch the app if it is in standby mode.
 
 # Key Features
 Interactive Gantt Chart: Visualize the entire day's schedule at a glance.
