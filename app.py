@@ -10,6 +10,8 @@ from datetime import datetime, timedelta
 def _parse_pause(params, start_time_global):
     if not params.get('pause_enabled'):
         return None
+    if not params.get('pause_locations'):
+        return None
     try:
         pause_start = datetime.strptime(params['pause_time'], "%H:%M")
     except ValueError:
@@ -22,7 +24,7 @@ def _parse_pause(params, start_time_global):
         'start': pause_start,
         'end': pause_start + pause_duration,
         'duration': pause_duration,
-        'location': params['pause_location']
+        'locations': params['pause_locations']
     }
 
 
@@ -49,20 +51,24 @@ def _apply_pause_to_times(times, pause):
     if not pause:
         return times
 
-    location = pause['location']
-    if location == 'Dressage':
-        return _apply_pause_to_phase(times, pause, 'dressage')
-    if location == 'Cross':
-        return _apply_pause_to_phase(times, pause, 'cross')
-    if location == 'Saut':
-        return _apply_pause_to_phase(times, pause, 'saut')
-
-    # Dressage/Saut (même terrain)
-    times_after_dress = _apply_pause_to_phase(times, pause, 'dressage')
-    d_start, d_end = times_after_dress['dressage']
-    if d_start <= pause['start'] < d_end or pause['start'] <= d_start:
-        return times_after_dress
-    return _apply_pause_to_phase(times_after_dress, pause, 'saut')
+    locations = pause['locations']
+    
+    # Appliquer la pause à chaque lieu sélectionné
+    for location in locations:
+        if location == 'Dressage':
+            times = _apply_pause_to_phase(times, pause, 'dressage')
+        elif location == 'Cross':
+            times = _apply_pause_to_phase(times, pause, 'cross')
+        elif location == 'Saut':
+            times = _apply_pause_to_phase(times, pause, 'saut')
+        elif location == 'Dressage/Saut (même terrain)':
+            # Dressage/Saut (même terrain)
+            times = _apply_pause_to_phase(times, pause, 'dressage')
+            d_start, d_end = times['dressage']
+            if not (d_start <= pause['start'] < d_end or pause['start'] <= d_start):
+                times = _apply_pause_to_phase(times, pause, 'saut')
+    
+    return times
 
 
 def _build_times(candidat_start, params, pause):
@@ -249,15 +255,23 @@ with st.sidebar:
     pause_enabled = st.checkbox("Activer un temps mort")
     pause_time = ""
     pause_duration = 0.0
-    pause_location = "Dressage"
+    pause_locations = []
     if pause_enabled:
         pause_time = st.text_input("Horaire du temps mort", "14:30")
         pause_duration = st.number_input("Durée (minutes)", min_value=0.0, value=10.0)
+        st.write("Lieu(x) du temps mort :")
         if shared_arena:
-            options = ["Dressage/Saut (même terrain)", "Cross"]
+            if st.checkbox("Dressage/Saut (même terrain)", key="pause_dress_saut"):
+                pause_locations.append("Dressage/Saut (même terrain)")
+            if st.checkbox("Cross", key="pause_cross"):
+                pause_locations.append("Cross")
         else:
-            options = ["Dressage", "Cross", "Saut"]
-        pause_location = st.radio("Lieu du temps mort", options)
+            if st.checkbox("Dressage", key="pause_dressage"):
+                pause_locations.append("Dressage")
+            if st.checkbox("Cross", key="pause_cross"):
+                pause_locations.append("Cross")
+            if st.checkbox("Saut", key="pause_saut"):
+                pause_locations.append("Saut")
 
     st.markdown('<div class="sidebar-spacer"></div>', unsafe_allow_html=True)
 
@@ -274,7 +288,7 @@ if generate_btn:
         'reset_dressage': reset_dressage, 'reset_cross': reset_cross, 'reset_saut': reset_saut,
         'shared_arena': shared_arena, 'transition_shared': transition_shared,
         'pause_enabled': pause_enabled, 'pause_time': pause_time,
-        'pause_duration': pause_duration, 'pause_location': pause_location
+        'pause_duration': pause_duration, 'pause_locations': pause_locations
     }
 
     schedule = calculer_planning(params)
