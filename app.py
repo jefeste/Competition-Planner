@@ -29,29 +29,50 @@ def _parse_pause(params, start_time_global):
 
 
 def _apply_pause_to_phase(times, pause, phase):
+    """Applique la pause à une phase donnée si elle est impactée par le temps mort."""
     phases = ['dressage', 'cross', 'saut']
     idx = phases.index(phase)
     p_start, p_end = times[phase]
     pause_start = pause['start']
+    pause_end = pause['end']
     duration = pause['duration']
 
-    if pause_start <= p_start:
+    # Si la phase se termine avant le début du temps mort → pas d'impact
+    if p_end <= pause_start:
+        return times
+    
+    # Si la phase commence après la fin du temps mort → décaler
+    if p_start >= pause_start:
         for ph in phases[idx:]:
             s, e = times[ph]
-            times[ph] = (s + duration, e + duration)
+            if s >= pause_start:  # Ne décaler que si après le temps mort
+                times[ph] = (s + duration, e + duration)
+    # Si le temps mort tombe pendant la phase → étendre la phase et décaler les suivantes
     elif p_start < pause_start < p_end:
         times[phase] = (p_start, p_end + duration)
         for ph in phases[idx + 1:]:
             s, e = times[ph]
             times[ph] = (s + duration, e + duration)
+    
     return times
 
 
 def _apply_pause_to_times(times, pause):
+    """Applique le temps mort aux horaires d'un cavalier, seulement si impacté."""
     if not pause:
         return times
 
     locations = pause['locations']
+    pause_start = pause['start']
+    
+    # Vérifier si ce cavalier est impacté par le temps mort
+    # (au moins une de ses épreuves se termine après le début du temps mort)
+    earliest_end = min(times['dressage'][1], times['cross'][1], times['saut'][1])
+    latest_start = max(times['dressage'][0], times['cross'][0], times['saut'][0])
+    
+    # Si toutes les épreuves finissent avant le temps mort → pas d'impact
+    if times['saut'][1] <= pause_start and times['cross'][1] <= pause_start and times['dressage'][1] <= pause_start:
+        return times
     
     # Appliquer la pause à chaque lieu sélectionné
     for location in locations:
@@ -62,11 +83,9 @@ def _apply_pause_to_times(times, pause):
         elif location == 'Saut':
             times = _apply_pause_to_phase(times, pause, 'saut')
         elif location == 'Dressage/Saut (même terrain)':
-            # Dressage/Saut (même terrain)
+            # Dressage/Saut (même terrain) - appliquer aux deux
             times = _apply_pause_to_phase(times, pause, 'dressage')
-            d_start, d_end = times['dressage']
-            if not (d_start <= pause['start'] < d_end or pause['start'] <= d_start):
-                times = _apply_pause_to_phase(times, pause, 'saut')
+            times = _apply_pause_to_phase(times, pause, 'saut')
     
     return times
 
@@ -143,8 +162,9 @@ def calculer_planning(params):
             schedule.append({'id': i+1, 'dressage': times['dressage'], 'cross': times['cross'], 'saut': times['saut']})
             if i < len(intervals):
                 next_start = current_start + timedelta(minutes=intervals[i])
-                if pause and next_start >= pause['start']:
-                    next_start += pause['duration']
+                # Si le prochain départ tombe pendant le temps mort, le décaler après
+                if pause and pause['start'] <= next_start < pause['end']:
+                    next_start = pause['end']
                 current_start = next_start
         return schedule
 
