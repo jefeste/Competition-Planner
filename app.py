@@ -281,15 +281,15 @@ if generate_btn:
             # Dressage
             start, end = mdates.date2num(cav['dressage'][0]), mdates.date2num(cav['dressage'][1])
             ax.barh(y, end - start, left=start, height=bar_height, color=colors['dressage'], edgecolor='white')
-            ax.text(start, y + 0.18, cav['dressage'][0].strftime("%H:%M"), fontsize=8, ha='center', fontweight='bold')
+            ax.text(start, y - 0.35, cav['dressage'][0].strftime("%H:%M"), fontsize=8, ha='center', fontweight='bold')
             # Cross
             start, end = mdates.date2num(cav['cross'][0]), mdates.date2num(cav['cross'][1])
             ax.barh(y, end - start, left=start, height=bar_height, color=colors['cross'], edgecolor='white')
-            ax.text(start, y + 0.18, cav['cross'][0].strftime("%H:%M"), fontsize=8, ha='center', fontweight='bold')
+            ax.text(start, y - 0.35, cav['cross'][0].strftime("%H:%M"), fontsize=8, ha='center', fontweight='bold')
             # Saut
             start, end = mdates.date2num(cav['saut'][0]), mdates.date2num(cav['saut'][1])
             ax.barh(y, end - start, left=start, height=bar_height, color=colors['saut'], edgecolor='white')
-            ax.text(start, y + 0.18, cav['saut'][0].strftime("%H:%M"), fontsize=8, ha='center', fontweight='bold')
+            ax.text(start, y - 0.35, cav['saut'][0].strftime("%H:%M"), fontsize=8, ha='center', fontweight='bold')
 
         ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
         ax.xaxis.set_major_locator(mdates.MinuteLocator(interval=15))
