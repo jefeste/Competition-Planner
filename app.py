@@ -175,14 +175,22 @@ st.markdown(
         <style>
             .made-by {
                 position: fixed;
-                top: 12px;
-                right: 18px;
-                z-index: 1000;
-                background: rgba(255,255,255,0.8);
-                padding: 6px 10px;
-                border-radius: 6px;
-                font-size: 13px;
-                box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+                top: 60px;
+                right: 20px;
+                z-index: 999999;
+                background: rgba(255,255,255,0.95);
+                padding: 8px 14px;
+                border-radius: 8px;
+                font-size: 14px;
+                box-shadow: 0 2px 12px rgba(0,0,0,0.15);
+                border: 1px solid #ddd;
+            }
+            .made-by a {
+                color: #0066cc;
+                text-decoration: none;
+            }
+            .made-by a:hover {
+                text-decoration: underline;
             }
             [data-testid="stSidebar"] > div:first-child {
                 display: flex;
@@ -245,10 +253,11 @@ with st.sidebar:
     if pause_enabled:
         pause_time = st.text_input("Horaire du temps mort", "14:30")
         pause_duration = st.number_input("Durée (minutes)", min_value=0.0, value=10.0)
-        options = ["Dressage", "Cross", "Saut"]
         if shared_arena:
-            options.append("Dressage/Saut (même terrain)")
-        pause_location = st.selectbox("Lieu du temps mort", options)
+            options = ["Dressage/Saut (même terrain)", "Cross"]
+        else:
+            options = ["Dressage", "Cross", "Saut"]
+        pause_location = st.radio("Lieu du temps mort", options)
 
     st.markdown('<div class="sidebar-spacer"></div>', unsafe_allow_html=True)
 
