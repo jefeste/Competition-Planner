@@ -29,31 +29,41 @@ def _parse_pause(params, start_time_global):
 
 
 def _apply_pause_to_phase(times, pause, phase):
-    """Applique la pause à une phase donnée si elle est impactée par le temps mort."""
+    """Applique la pause à une phase donnée si elle est impactée par le temps mort.
+    
+    Logique : si l'épreuve chevauche ou commence pendant le temps mort, 
+    on la décale pour qu'elle commence APRÈS la fin du temps mort.
+    """
     phases = ['dressage', 'cross', 'saut']
     idx = phases.index(phase)
     p_start, p_end = times[phase]
     pause_start = pause['start']
     pause_end = pause['end']
     duration = pause['duration']
+    phase_duration = p_end - p_start
 
-    # Si la phase se termine avant le début du temps mort → pas d'impact
+    # Si la phase se termine avant ou au début du temps mort → pas d'impact
     if p_end <= pause_start:
         return times
     
-    # Si la phase commence après la fin du temps mort → décaler
-    if p_start >= pause_start:
-        for ph in phases[idx:]:
-            s, e = times[ph]
-            if s >= pause_start:  # Ne décaler que si après le temps mort
-                times[ph] = (s + duration, e + duration)
-    # Si le temps mort tombe pendant la phase → étendre la phase et décaler les suivantes
-    elif p_start < pause_start < p_end:
-        times[phase] = (p_start, p_end + duration)
-        for ph in phases[idx + 1:]:
-            s, e = times[ph]
-            times[ph] = (s + duration, e + duration)
+    # Si la phase commence pendant ou après le début du temps mort mais avant la fin
+    # → la décaler pour commencer après la fin du temps mort
+    if p_start >= pause_start and p_start < pause_end:
+        new_start = pause_end
+        new_end = new_start + phase_duration
+        times[phase] = (new_start, new_end)
+        # Recalculer les phases suivantes à partir de cette nouvelle fin
+        return times
     
+    # Si le temps mort tombe PENDANT la phase (la phase a commencé avant le temps mort)
+    # → la phase est interrompue et reprend après, donc elle finit plus tard
+    if p_start < pause_start < p_end:
+        new_end = p_end + duration
+        times[phase] = (p_start, new_end)
+        return times
+    
+    # Si la phase commence après la fin du temps mort → pas de décalage direct
+    # (le décalage vient des phases précédentes)
     return times
 
 
@@ -64,17 +74,9 @@ def _apply_pause_to_times(times, pause):
 
     locations = pause['locations']
     pause_start = pause['start']
+    pause_end = pause['end']
     
-    # Vérifier si ce cavalier est impacté par le temps mort
-    # (au moins une de ses épreuves se termine après le début du temps mort)
-    earliest_end = min(times['dressage'][1], times['cross'][1], times['saut'][1])
-    latest_start = max(times['dressage'][0], times['cross'][0], times['saut'][0])
-    
-    # Si toutes les épreuves finissent avant le temps mort → pas d'impact
-    if times['saut'][1] <= pause_start and times['cross'][1] <= pause_start and times['dressage'][1] <= pause_start:
-        return times
-    
-    # Appliquer la pause à chaque lieu sélectionné
+    # Pour chaque lieu impacté, appliquer la pause
     for location in locations:
         if location == 'Dressage':
             times = _apply_pause_to_phase(times, pause, 'dressage')
@@ -83,7 +85,6 @@ def _apply_pause_to_times(times, pause):
         elif location == 'Saut':
             times = _apply_pause_to_phase(times, pause, 'saut')
         elif location == 'Dressage/Saut (même terrain)':
-            # Dressage/Saut (même terrain) - appliquer aux deux
             times = _apply_pause_to_phase(times, pause, 'dressage')
             times = _apply_pause_to_phase(times, pause, 'saut')
     
@@ -116,6 +117,28 @@ def verifier_conflit_individuel(candidat_start, schedule_existant, params, pause
     c_dress_start, c_dress_end = times['dressage']
     c_cross_start, c_cross_end = times['cross']
     c_saut_start, c_saut_end = times['saut']
+
+    # Vérifier qu'aucune épreuve ne se déroule PENDANT le temps mort (sur les lieux impactés)
+    if pause:
+        pause_start = pause['start']
+        pause_end = pause['end']
+        locations = pause['locations']
+        
+        for loc in locations:
+            if loc == 'Dressage' or loc == 'Dressage/Saut (même terrain)':
+                # L'épreuve ne peut pas chevaucher le temps mort
+                if c_dress_start < pause_end and c_dress_end > pause_start:
+                    # Mais c'est OK si elle est complètement avant ou après
+                    if not (c_dress_end <= pause_start or c_dress_start >= pause_end):
+                        return False
+            if loc == 'Cross':
+                if c_cross_start < pause_end and c_cross_end > pause_start:
+                    if not (c_cross_end <= pause_start or c_cross_start >= pause_end):
+                        return False
+            if loc == 'Saut' or loc == 'Dressage/Saut (même terrain)':
+                if c_saut_start < pause_end and c_saut_end > pause_start:
+                    if not (c_saut_end <= pause_start or c_saut_start >= pause_end):
+                        return False
 
     if schedule_existant:
         prev = schedule_existant[-1]
