@@ -4,17 +4,71 @@ import matplotlib.dates as mdates
 from datetime import datetime, timedelta
 
 # ==========================================
-# 1. LOGIQUE DE CALCUL 
+# 1. LOGIQUE DE CALCUL (MOTEUR IDENTIQUE)
 # ==========================================
 
-def verifier_conflit_individuel(candidat_start, schedule_existant, params):
-    """Vérifie les conflits selon les paramètres (identique script précédent)"""
+def _parse_pause(params, start_time_global):
+    if not params.get('pause_enabled'):
+        return None
+    try:
+        pause_start = datetime.strptime(params['pause_time'], "%H:%M")
+    except ValueError:
+        st.error("Format d'heure invalide pour le temps mort.")
+        return None
+    pause_duration = timedelta(minutes=params['pause_duration'])
+    if pause_duration.total_seconds() <= 0:
+        return None
+    return {
+        'start': pause_start,
+        'end': pause_start + pause_duration,
+        'duration': pause_duration,
+        'location': params['pause_location']
+    }
+
+
+def _apply_pause_to_phase(times, pause, phase):
+    phases = ['dressage', 'cross', 'saut']
+    idx = phases.index(phase)
+    p_start, p_end = times[phase]
+    pause_start = pause['start']
+    duration = pause['duration']
+
+    if pause_start <= p_start:
+        for ph in phases[idx:]:
+            s, e = times[ph]
+            times[ph] = (s + duration, e + duration)
+    elif p_start < pause_start < p_end:
+        times[phase] = (p_start, p_end + duration)
+        for ph in phases[idx + 1:]:
+            s, e = times[ph]
+            times[ph] = (s + duration, e + duration)
+    return times
+
+
+def _apply_pause_to_times(times, pause):
+    if not pause:
+        return times
+
+    location = pause['location']
+    if location == 'Dressage':
+        return _apply_pause_to_phase(times, pause, 'dressage')
+    if location == 'Cross':
+        return _apply_pause_to_phase(times, pause, 'cross')
+    if location == 'Saut':
+        return _apply_pause_to_phase(times, pause, 'saut')
+
+    # Dressage/Saut (même terrain)
+    times_after_dress = _apply_pause_to_phase(times, pause, 'dressage')
+    d_start, d_end = times_after_dress['dressage']
+    if d_start <= pause['start'] < d_end or pause['start'] <= d_start:
+        return times_after_dress
+    return _apply_pause_to_phase(times_after_dress, pause, 'saut')
+
+
+def _build_times(candidat_start, params, pause):
     d_dressage = timedelta(minutes=params['d_dressage'])
     d_cross = timedelta(minutes=params['d_cross'])
     d_saut = timedelta(minutes=params['d_saut'])
-    
-    offset_cross = d_dressage + timedelta(minutes=params['d_pause1'])
-    offset_saut = offset_cross + d_cross + timedelta(minutes=params['d_pause2'])
 
     c_dress_start = candidat_start
     c_dress_end = c_dress_start + d_dressage
@@ -22,6 +76,21 @@ def verifier_conflit_individuel(candidat_start, schedule_existant, params):
     c_cross_end = c_cross_start + d_cross
     c_saut_start = c_cross_end + timedelta(minutes=params['d_pause2'])
     c_saut_end = c_saut_start + d_saut
+
+    times = {
+        'dressage': (c_dress_start, c_dress_end),
+        'cross': (c_cross_start, c_cross_end),
+        'saut': (c_saut_start, c_saut_end)
+    }
+    return _apply_pause_to_times(times, pause)
+
+
+def verifier_conflit_individuel(candidat_start, schedule_existant, params, pause=None):
+    """Vérifie les conflits selon les paramètres (identique script précédent)"""
+    times = _build_times(candidat_start, params, pause)
+    c_dress_start, c_dress_end = times['dressage']
+    c_cross_start, c_cross_end = times['cross']
+    c_saut_start, c_saut_end = times['saut']
 
     if schedule_existant:
         prev = schedule_existant[-1]
@@ -46,13 +115,9 @@ def calculer_planning(params):
         st.error("Format d'heure invalide.")
         return []
 
-    d_dressage = timedelta(minutes=params['d_dressage'])
-    d_pause1 = timedelta(minutes=params['d_pause1'])
-    d_cross = timedelta(minutes=params['d_cross'])
-    d_pause2 = timedelta(minutes=params['d_pause2'])
-    d_saut = timedelta(minutes=params['d_saut'])
     nb_cavaliers = params['nb_cavaliers']
     schedule = []
+    pause = _parse_pause(params, start_time_global)
 
     if params['mode'] == 'Manuel':
         try:
@@ -68,17 +133,16 @@ def calculer_planning(params):
             
         current_start = start_time_global
         for i in range(nb_cavaliers):
-            fin_dress = current_start + d_dressage
-            deb_cross = fin_dress + d_pause1
-            fin_cross = deb_cross + d_cross
-            deb_saut = fin_cross + d_pause2
-            fin_saut = deb_saut + d_saut
-            schedule.append({'id': i+1, 'dressage': (current_start, fin_dress), 'cross': (deb_cross, fin_cross), 'saut': (deb_saut, fin_saut)})
-            if i < len(intervals): current_start += timedelta(minutes=intervals[i])
+            times = _build_times(current_start, params, pause)
+            schedule.append({'id': i+1, 'dressage': times['dressage'], 'cross': times['cross'], 'saut': times['saut']})
+            if i < len(intervals):
+                next_start = current_start + timedelta(minutes=intervals[i])
+                if pause and next_start >= pause['start']:
+                    next_start += pause['duration']
+                current_start = next_start
         return schedule
 
     else: # MODE AUTO
-        current_search_time = start_time_global
         step = timedelta(seconds=30)
         
         progress_bar = st.progress(0)
@@ -87,18 +151,14 @@ def calculer_planning(params):
             start_candidate = schedule[-1]['dressage'][0] + timedelta(minutes=1) if i > 0 else start_time_global
             
             while True:
-                if verifier_conflit_individuel(start_candidate, schedule, params): break
+                if verifier_conflit_individuel(start_candidate, schedule, params, pause): break
                 start_candidate += step
                 if (start_candidate - start_time_global).total_seconds() > 43200: # 12h max
                     st.error("Impossible de trouver une solution (trop de contraintes).")
                     return []
 
-            fin_dress = start_candidate + d_dressage
-            deb_cross = fin_dress + d_pause1
-            fin_cross = deb_cross + d_cross
-            deb_saut = fin_cross + d_pause2
-            fin_saut = deb_saut + d_saut
-            schedule.append({'id': i+1, 'dressage': (start_candidate, fin_dress), 'cross': (deb_cross, fin_cross), 'saut': (deb_saut, fin_saut)})
+            times = _build_times(start_candidate, params, pause)
+            schedule.append({'id': i+1, 'dressage': times['dressage'], 'cross': times['cross'], 'saut': times['saut']})
             
             progress_bar.progress((i + 1) / nb_cavaliers)
             
@@ -109,6 +169,35 @@ def calculer_planning(params):
 # ==========================================
 
 st.set_page_config(page_title="Planning CCE", layout="wide")
+
+st.markdown(
+        """
+        <style>
+            .made-by {
+                position: fixed;
+                top: 12px;
+                right: 18px;
+                z-index: 1000;
+                background: rgba(255,255,255,0.8);
+                padding: 6px 10px;
+                border-radius: 6px;
+                font-size: 13px;
+                box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+            }
+            [data-testid="stSidebar"] > div:first-child {
+                display: flex;
+                flex-direction: column;
+                height: 100vh;
+            }
+            .sidebar-spacer { flex: 1 1 auto; }
+        </style>
+        <div class="made-by">
+            Made by <a href="https://jeremydigard.com" target="_blank">Jérémy Digard</a> for
+            <a href="https://equissima.ch" target="_blank">Equissima</a>
+        </div>
+        """,
+        unsafe_allow_html=True
+)
 
 st.title("🏇 Générateur de Planning Concours Complet")
 st.markdown("---")
@@ -128,11 +217,11 @@ with st.sidebar:
     
     st.markdown("---")
     st.header("2. Mode de Calcul")
-    mode = st.radio("Méthode :", ["Manuel", "Optimisation Auto"])
+    mode = st.radio("Méthode :", ["Manuel", "Optimisation Auto"], index=1)
 
     manual_list = ""
     reset_dressage, reset_cross, reset_saut = 0.0, 0.0, 0.0
-    shared_arena, transition_shared = False, 0.0
+    shared_arena, transition_shared = True, 0.0
 
     if mode == "Manuel":
         manual_list = st.text_input("Liste des écarts (ex: 6, 7, 4)", "6, 7, 4")
@@ -143,11 +232,27 @@ with st.sidebar:
         with col2: reset_cross = st.number_input("Reset Cross", value=2.0)
         with col3: reset_saut = st.number_input("Reset Saut", value=1.5)
         
-        shared_arena = st.checkbox("Même terrain (Dressage / Saut)")
+        shared_arena = st.checkbox("Même terrain (Dressage / Saut)", value=True)
         if shared_arena:
             transition_shared = st.number_input("Temps transition D/S", value=5.0)
 
-    generate_btn = st.button("Générer le Planning", type="primary")
+    st.markdown("---")
+    st.header("3. Temps morts (accident/maintenance)")
+    pause_enabled = st.checkbox("Activer un temps mort")
+    pause_time = ""
+    pause_duration = 0.0
+    pause_location = "Dressage"
+    if pause_enabled:
+        pause_time = st.text_input("Horaire du temps mort", "14:30")
+        pause_duration = st.number_input("Durée (minutes)", min_value=0.0, value=10.0)
+        options = ["Dressage", "Cross", "Saut"]
+        if shared_arena:
+            options.append("Dressage/Saut (même terrain)")
+        pause_location = st.selectbox("Lieu du temps mort", options)
+
+    st.markdown('<div class="sidebar-spacer"></div>', unsafe_allow_html=True)
+
+    generate_btn = st.button("Générer le Planning", type="primary", use_container_width=True)
 
 # --- CORPS PRINCIPAL ---
 
@@ -158,7 +263,9 @@ if generate_btn:
         'd_cross': d_cross, 'd_pause2': d_pause2, 'd_saut': d_saut,
         'mode': mode, 'manual_list': manual_list,
         'reset_dressage': reset_dressage, 'reset_cross': reset_cross, 'reset_saut': reset_saut,
-        'shared_arena': shared_arena, 'transition_shared': transition_shared
+        'shared_arena': shared_arena, 'transition_shared': transition_shared,
+        'pause_enabled': pause_enabled, 'pause_time': pause_time,
+        'pause_duration': pause_duration, 'pause_location': pause_location
     }
 
     schedule = calculer_planning(params)
@@ -174,15 +281,15 @@ if generate_btn:
             # Dressage
             start, end = mdates.date2num(cav['dressage'][0]), mdates.date2num(cav['dressage'][1])
             ax.barh(y, end - start, left=start, height=bar_height, color=colors['dressage'], edgecolor='white')
-            ax.text(start, y + 0.35, cav['dressage'][0].strftime("%H:%M"), fontsize=8, ha='center', fontweight='bold')
+            ax.text(start, y + 0.18, cav['dressage'][0].strftime("%H:%M"), fontsize=8, ha='center', fontweight='bold')
             # Cross
             start, end = mdates.date2num(cav['cross'][0]), mdates.date2num(cav['cross'][1])
             ax.barh(y, end - start, left=start, height=bar_height, color=colors['cross'], edgecolor='white')
-            ax.text(start, y + 0.35, cav['cross'][0].strftime("%H:%M"), fontsize=8, ha='center', fontweight='bold')
+            ax.text(start, y + 0.18, cav['cross'][0].strftime("%H:%M"), fontsize=8, ha='center', fontweight='bold')
             # Saut
             start, end = mdates.date2num(cav['saut'][0]), mdates.date2num(cav['saut'][1])
             ax.barh(y, end - start, left=start, height=bar_height, color=colors['saut'], edgecolor='white')
-            ax.text(start, y + 0.35, cav['saut'][0].strftime("%H:%M"), fontsize=8, ha='center', fontweight='bold')
+            ax.text(start, y + 0.18, cav['saut'][0].strftime("%H:%M"), fontsize=8, ha='center', fontweight='bold')
 
         ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
         ax.xaxis.set_major_locator(mdates.MinuteLocator(interval=15))
