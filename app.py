@@ -249,7 +249,7 @@ st.markdown(
             .sidebar-spacer { flex: 1 1 auto; }
         </style>
         <div class="made-by">
-            Made by <a href="www.jeremydigard.com" target="_blank">Jérémy Digard</a> for
+            Made by <a href="http://www.jeremydigard.com" target="_blank">Jérémy Digard</a> for
             <a href="https://www.equissima.ch" target="_blank">Equissima</a>
             2025- 2026
         </div>
