@@ -378,6 +378,133 @@ def calculer_planning(params):
     
     return [], None
 
+
+# ============================================
+# COUCHE 6.5 : OPTIMISATION DE PARAMÈTRES
+# ============================================
+
+def is_valid_parameter_set(params):
+    """
+    Vérifie qu'un set de paramètres est valide
+    
+    Contraintes:
+    - Tous les paramètres doivent être > 0
+    - Les transitions doivent permettre le déplacement physique
+    """
+    if params['d_pause1'] <= 0 or params['d_pause2'] <= 0:
+        return False
+    if params['reset_dressage'] < 0 or params['reset_cross'] < 0 or params['reset_saut'] < 0:
+        return False
+    if params['transition_shared'] < 0:
+        return False
+    
+    # Contraintes minimales raisonnables (optionnel)
+    if params['d_pause1'] < 2 or params['d_pause2'] < 2:  # Minimum 2 min pour se déplacer
+        return False
+    if params['transition_shared'] < 1:  # Minimum 1 min de buffer
+        return False
+    
+    return True
+
+
+def calculate_total_duration(schedule):
+    """
+    Calcule le temps total d'un planning en minutes
+    
+    Temps total = heure_fin_dernier_cavalier - heure_début_premier_cavalier
+    """
+    if not schedule:
+        return float('inf')
+    
+    start = schedule[0]['dressage'][0]
+    end = schedule[-1]['saut'][1]
+    
+    return (end - start).total_seconds() / 60
+
+
+def generate_parameter_combinations(base_params, delta=3, step=1):
+    """
+    Génère toutes les combinaisons de paramètres autour des valeurs de base
+    
+    Input:
+        - base_params: dict avec les paramètres actuels
+        - delta: écart maximum en minutes (±delta)
+        - step: pas d'incrémentation en minutes
+    
+    Output: liste de dicts de paramètres
+    """
+    params_to_optimize = ['d_pause1', 'd_pause2', 'reset_dressage', 
+                          'reset_cross', 'reset_saut', 'transition_shared']
+    
+    # Générer les valeurs pour chaque paramètre
+    param_ranges = {}
+    for param in params_to_optimize:
+        base_value = base_params[param]
+        values = []
+        for offset in range(-delta, delta + 1, step):
+            values.append(base_value + offset)
+        param_ranges[param] = values
+    
+    # Générer toutes les combinaisons
+    import itertools
+    combinations = []
+    
+    keys = list(param_ranges.keys())
+    for values in itertools.product(*[param_ranges[k] for k in keys]):
+        test_params = base_params.copy()
+        for i, key in enumerate(keys):
+            test_params[key] = values[i]
+        
+        # Valider les paramètres
+        if is_valid_parameter_set(test_params):
+            combinations.append(test_params)
+    
+    return combinations
+
+
+def optimize_parameters(base_params, top_n=5, progress_callback=None):
+    """
+    Optimise les paramètres pour minimiser le temps total
+    
+    Input:
+        - base_params: dict avec les paramètres de base
+        - top_n: nombre de meilleures configurations à retourner
+        - progress_callback: fonction pour mettre à jour la progression
+    
+    Output: liste de tuples (params, temps_total, gain)
+    """
+    # Générer toutes les combinaisons
+    combinations = generate_parameter_combinations(base_params, delta=3, step=1)
+    total_combinations = len(combinations)
+    
+    results = []
+    
+    # Calculer le temps total de base
+    base_schedule, _ = calculer_planning(base_params)
+    base_duration = calculate_total_duration(base_schedule) if base_schedule else float('inf')
+    
+    # Tester chaque combinaison
+    for idx, test_params in enumerate(combinations):
+        try:
+            schedule, _ = calculer_planning(test_params)
+            if schedule:
+                duration = calculate_total_duration(schedule)
+                gain = base_duration - duration
+                results.append((test_params, duration, gain))
+        except Exception:
+            # Ignorer les combinaisons qui génèrent des erreurs
+            pass
+        
+        # Mise à jour de la progression
+        if progress_callback and (idx + 1) % 100 == 0:
+            progress_callback((idx + 1) / total_combinations)
+    
+    # Trier par temps total croissant
+    results.sort(key=lambda x: x[1])
+    
+    return results[:top_n], total_combinations, base_duration
+
+
 # ============================================
 # COUCHE 7 : INTERFACE STREAMLIT
 # ============================================
@@ -462,6 +589,11 @@ with st.sidebar:
     st.markdown('<div class="sidebar-spacer"></div>', unsafe_allow_html=True)
 
     generate_btn = st.button("Générer le Planning", type="primary", use_container_width=True)
+    
+    # Bouton d'optimisation (seulement en mode Auto avec shared_arena)
+    optimize_btn = False
+    if mode == "Optimisation Auto" and shared_arena:
+        optimize_btn = st.button("🔍 Suggérer Optimisations", use_container_width=True)
 
 # --- CORPS PRINCIPAL ---
 
@@ -522,3 +654,106 @@ if generate_btn:
         
         st.pyplot(fig)
         st.success(f"Planning généré pour {nb_cavaliers} cavaliers !")
+
+
+# --- OPTIMISATION DES PARAMÈTRES ---
+
+if optimize_btn:
+    params = {
+        'start_time': start_time, 'nb_cavaliers': int(nb_cavaliers),
+        'd_dressage': d_dressage, 'd_pause1': d_pause1,
+        'd_cross': d_cross, 'd_pause2': d_pause2, 'd_saut': d_saut,
+        'mode': mode, 'manual_list': manual_list,
+        'reset_dressage': reset_dressage, 'reset_cross': reset_cross, 'reset_saut': reset_saut,
+        'shared_arena': shared_arena, 'transition_shared': transition_shared
+    }
+    
+    st.markdown("---")
+    st.header("🔍 Recherche des configurations optimales")
+    st.info("Analyse en cours... Cette opération peut prendre quelques minutes selon le nombre de combinaisons.")
+    
+    # Barre de progression
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    def update_progress(value):
+        progress_bar.progress(value)
+        status_text.text(f"Progression : {value*100:.0f}%")
+    
+    # Lancer l'optimisation
+    start_opt = time.time()
+    results, total_tested, base_duration = optimize_parameters(params, top_n=5, progress_callback=update_progress)
+    opt_duration = time.time() - start_opt
+    
+    progress_bar.progress(1.0)
+    status_text.empty()
+    
+    # Afficher les résultats
+    if results:
+        st.success(f"✅ Optimisation terminée en {opt_duration:.1f}s ({total_tested} configurations testées)")
+        
+        # Configuration actuelle
+        st.subheader("📊 Configuration actuelle")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("Temps total actuel", f"{base_duration:.1f} min")
+        with col2:
+            st.write("**Paramètres actuels:**")
+            st.write(f"- Pause 1: {d_pause1} min")
+            st.write(f"- Pause 2: {d_pause2} min")
+            st.write(f"- Reset Dress: {reset_dressage} min")
+            st.write(f"- Reset Cross: {reset_cross} min")
+            st.write(f"- Reset Saut: {reset_saut} min")
+            st.write(f"- Transition D/S: {transition_shared} min")
+        
+        st.markdown("---")
+        st.subheader("🏆 Top 5 Configurations Optimales")
+        
+        # Afficher chaque résultat
+        for idx, (opt_params, duration, gain) in enumerate(results, 1):
+            with st.expander(f"#{idx} - Temps: {duration:.1f} min (gain: {gain:.1f} min)", expanded=(idx==1)):
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    st.write("**Transitions:**")
+                    st.write(f"Pause 1: {opt_params['d_pause1']:.0f} min")
+                    st.write(f"Pause 2: {opt_params['d_pause2']:.0f} min")
+                
+                with col2:
+                    st.write("**Resets:**")
+                    st.write(f"Dressage: {opt_params['reset_dressage']:.0f} min")
+                    st.write(f"Cross: {opt_params['reset_cross']:.0f} min")
+                    st.write(f"Saut: {opt_params['reset_saut']:.0f} min")
+                
+                with col3:
+                    st.write("**Terrain partagé:**")
+                    st.write(f"Transition: {opt_params['transition_shared']:.0f} min")
+                    st.metric("Gain de temps", f"{gain:.1f} min", delta=f"{(gain/base_duration)*100:.1f}%")
+                
+                # Bouton pour appliquer cette configuration
+                if st.button(f"Appliquer cette configuration", key=f"apply_{idx}"):
+                    st.warning("⚠️ Pour appliquer ces paramètres, veuillez les saisir manuellement dans la barre latérale.")
+        
+        # Graphique comparatif
+        st.markdown("---")
+        st.subheader("📈 Comparaison des temps totaux")
+        
+        fig_comp, ax_comp = plt.subplots(figsize=(10, 4))
+        
+        config_names = ["Actuel"] + [f"Config #{i+1}" for i in range(len(results))]
+        times = [base_duration] + [r[1] for r in results]
+        colors_bar = ['#FF6B6B'] + ['#51CF66'] * len(results)
+        
+        ax_comp.barh(config_names, times, color=colors_bar)
+        ax_comp.set_xlabel('Temps total (minutes)')
+        ax_comp.set_title('Comparaison des configurations')
+        ax_comp.grid(True, axis='x', alpha=0.3)
+        
+        # Ajouter les valeurs sur les barres
+        for i, (name, time_val) in enumerate(zip(config_names, times)):
+            ax_comp.text(time_val, i, f' {time_val:.1f} min', 
+                        va='center', fontweight='bold')
+        
+        st.pyplot(fig_comp)
+    else:
+        st.error("❌ Aucune configuration optimale trouvée. Les paramètres actuels sont peut-être déjà optimaux.")
