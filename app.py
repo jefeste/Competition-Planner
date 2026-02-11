@@ -2,220 +2,385 @@ import streamlit as st
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from datetime import datetime, timedelta
+import time
 
-# ==========================================
-# 1. LOGIQUE DE CALCUL (MOTEUR IDENTIQUE)
-# ==========================================
+# ============================================
+# COUCHE 1 : UTILITAIRES DE BASE (Pure Functions)
+# ============================================
 
-def _parse_pause(params, start_time_global):
-    if not params.get('pause_enabled'):
-        return None
-    if not params.get('pause_locations'):
-        return None
-    try:
-        pause_start = datetime.strptime(params['pause_time'], "%H:%M")
-    except ValueError:
-        st.error("Format d'heure invalide pour le temps mort.")
-        return None
-    pause_duration = timedelta(minutes=params['pause_duration'])
-    if pause_duration.total_seconds() <= 0:
-        return None
-    return {
-        'start': pause_start,
-        'end': pause_start + pause_duration,
-        'duration': pause_duration,
-        'locations': params['pause_locations']
-    }
+def parse_start_time(time_str):
+    """Parse une chaîne horaire en datetime"""
+    return datetime.strptime(time_str, "%H:%M")
 
 
-def _apply_pause_to_phase(times, pause, phase):
-    """Applique la pause à une phase donnée si elle est impactée par le temps mort.
-    
-    Logique : si l'épreuve chevauche ou commence pendant le temps mort, 
-    on la décale pour qu'elle commence APRÈS la fin du temps mort.
+def build_single_rider_times(start_datetime, params):
     """
-    phases = ['dressage', 'cross', 'saut']
-    idx = phases.index(phase)
-    p_start, p_end = times[phase]
-    pause_start = pause['start']
-    pause_end = pause['end']
-    duration = pause['duration']
-    phase_duration = p_end - p_start
-
-    # Si la phase se termine avant ou au début du temps mort → pas d'impact
-    if p_end <= pause_start:
-        return times
+    Calcule les horaires d'un cavalier à partir de son heure de départ
     
-    # Si la phase commence pendant ou après le début du temps mort mais avant la fin
-    # → la décaler pour commencer après la fin du temps mort
-    if p_start >= pause_start and p_start < pause_end:
-        new_start = pause_end
-        new_end = new_start + phase_duration
-        times[phase] = (new_start, new_end)
-        # Recalculer les phases suivantes à partir de cette nouvelle fin
-        return times
+    Input:
+        - start_datetime: datetime du départ dressage
+        - params: dict avec d_dressage, d_cross, d_saut, d_pause1, d_pause2
     
-    # Si le temps mort tombe PENDANT la phase (la phase a commencé avant le temps mort)
-    # → la phase est interrompue et reprend après, donc elle finit plus tard
-    if p_start < pause_start < p_end:
-        new_end = p_end + duration
-        times[phase] = (p_start, new_end)
-        return times
-    
-    # Si la phase commence après la fin du temps mort → pas de décalage direct
-    # (le décalage vient des phases précédentes)
-    return times
-
-
-def _apply_pause_to_times(times, pause):
-    """Applique le temps mort aux horaires d'un cavalier, seulement si impacté."""
-    if not pause:
-        return times
-
-    locations = pause['locations']
-    pause_start = pause['start']
-    pause_end = pause['end']
-    
-    # Pour chaque lieu impacté, appliquer la pause
-    for location in locations:
-        if location == 'Dressage':
-            times = _apply_pause_to_phase(times, pause, 'dressage')
-        elif location == 'Cross':
-            times = _apply_pause_to_phase(times, pause, 'cross')
-        elif location == 'Saut':
-            times = _apply_pause_to_phase(times, pause, 'saut')
-        elif location == 'Dressage/Saut (même terrain)':
-            times = _apply_pause_to_phase(times, pause, 'dressage')
-            times = _apply_pause_to_phase(times, pause, 'saut')
-    
-    return times
-
-
-def _build_times(candidat_start, params, pause):
+    Output: dict avec 'dressage', 'cross', 'saut' (tuples de start/end)
+    """
     d_dressage = timedelta(minutes=params['d_dressage'])
     d_cross = timedelta(minutes=params['d_cross'])
     d_saut = timedelta(minutes=params['d_saut'])
 
-    c_dress_start = candidat_start
+    c_dress_start = start_datetime
     c_dress_end = c_dress_start + d_dressage
     c_cross_start = c_dress_end + timedelta(minutes=params['d_pause1'])
     c_cross_end = c_cross_start + d_cross
     c_saut_start = c_cross_end + timedelta(minutes=params['d_pause2'])
     c_saut_end = c_saut_start + d_saut
 
-    times = {
+    return {
         'dressage': (c_dress_start, c_dress_end),
         'cross': (c_cross_start, c_cross_end),
         'saut': (c_saut_start, c_saut_end)
     }
-    return _apply_pause_to_times(times, pause)
 
 
-def verifier_conflit_individuel(candidat_start, schedule_existant, params, pause=None):
-    """Vérifie les conflits selon les paramètres (identique script précédent)"""
-    times = _build_times(candidat_start, params, pause)
-    c_dress_start, c_dress_end = times['dressage']
-    c_cross_start, c_cross_end = times['cross']
-    c_saut_start, c_saut_end = times['saut']
+def calculate_max_reset(params):
+    """Retourne le temps de reset maximum parmi les 3 terrains"""
+    return max(params['reset_dressage'], params['reset_cross'], params['reset_saut'])
 
-    # Vérifier qu'aucune épreuve ne se déroule PENDANT le temps mort (sur les lieux impactés)
-    if pause:
-        pause_start = pause['start']
-        pause_end = pause['end']
-        locations = pause['locations']
-        
-        for loc in locations:
-            if loc == 'Dressage' or loc == 'Dressage/Saut (même terrain)':
-                # L'épreuve ne peut pas chevaucher le temps mort
-                if c_dress_start < pause_end and c_dress_end > pause_start:
-                    # Mais c'est OK si elle est complètement avant ou après
-                    if not (c_dress_end <= pause_start or c_dress_start >= pause_end):
-                        return False
-            if loc == 'Cross':
-                if c_cross_start < pause_end and c_cross_end > pause_start:
-                    if not (c_cross_end <= pause_start or c_cross_start >= pause_end):
-                        return False
-            if loc == 'Saut' or loc == 'Dressage/Saut (même terrain)':
-                if c_saut_start < pause_end and c_saut_end > pause_start:
-                    if not (c_saut_end <= pause_start or c_saut_start >= pause_end):
-                        return False
 
-    if schedule_existant:
-        prev = schedule_existant[-1]
-        if c_dress_start < prev['dressage'][1] + timedelta(minutes=params['reset_dressage']): return False
-        if c_cross_start < prev['cross'][1] + timedelta(minutes=params['reset_cross']): return False
-        if c_saut_start < prev['saut'][1] + timedelta(minutes=params['reset_saut']): return False
+def calculate_max_duration(params):
+    """Retourne la durée d'épreuve maximale"""
+    return max(params['d_dressage'], params['d_cross'], params['d_saut'])
 
-    if params['shared_arena']:
-        buffer = timedelta(minutes=params['transition_shared'])
-        for other in schedule_existant:
-            other_saut_start, other_saut_end = other['saut']
-            if (c_dress_start < other_saut_end + buffer) and (c_dress_end > other_saut_start - buffer): return False
-            other_dress_start, other_dress_end = other['dressage']
-            if (c_saut_start < other_dress_end + buffer) and (c_saut_end > other_dress_start - buffer): return False
-                
+
+# ============================================
+# COUCHE 2 : VÉRIFICATION DE CONFLITS
+# ============================================
+
+def check_reset_conflicts(candidate_times, last_rider, params):
+    """
+    Vérifie que le cavalier candidat respecte les temps de reset
+    avec le dernier cavalier du schedule
+    
+    Output: bool (True si pas de conflit)
+    """
+    c_dress_start = candidate_times['dressage'][0]
+    c_cross_start = candidate_times['cross'][0]
+    c_saut_start = candidate_times['saut'][0]
+    
+    prev_dress_end = last_rider['dressage'][1]
+    prev_cross_end = last_rider['cross'][1]
+    prev_saut_end = last_rider['saut'][1]
+    
+    if c_dress_start < prev_dress_end + timedelta(minutes=params['reset_dressage']):
+        return False
+    if c_cross_start < prev_cross_end + timedelta(minutes=params['reset_cross']):
+        return False
+    if c_saut_start < prev_saut_end + timedelta(minutes=params['reset_saut']):
+        return False
+    
     return True
 
-def calculer_planning(params):
+
+def check_shared_arena_conflict(candidate_times, schedule, params):
+    """
+    Vérifie les conflits sur terrain partagé dressage/saut
+    
+    Output: bool (True si pas de conflit)
+    """
+    buffer = timedelta(minutes=params['transition_shared'])
+    c_dress_start, c_dress_end = candidate_times['dressage']
+    c_saut_start, c_saut_end = candidate_times['saut']
+    
+    for other in schedule:
+        other_saut_start, other_saut_end = other['saut']
+        other_dress_start, other_dress_end = other['dressage']
+        
+        # Dressage candidat vs Saut autre
+        if (c_dress_start < other_saut_end + buffer) and (c_dress_end > other_saut_start - buffer):
+            return False
+        # Saut candidat vs Dressage autre
+        if (c_saut_start < other_dress_end + buffer) and (c_saut_end > other_dress_start - buffer):
+            return False
+    
+    return True
+
+
+def verify_no_conflicts(candidate_start, schedule, params):
+    """
+    Vérification complète : reset + shared arena si nécessaire
+    
+    Output: bool (True si tout OK)
+    """
+    candidate_times = build_single_rider_times(candidate_start, params)
+    
+    # Vérifier les resets avec le dernier cavalier
+    if schedule:
+        if not check_reset_conflicts(candidate_times, schedule[-1], params):
+            return False
+    
+    # Vérifier le terrain partagé si activé
+    if params['shared_arena']:
+        if not check_shared_arena_conflict(candidate_times, schedule, params):
+            return False
+    
+    return True
+
+
+# ============================================
+# COUCHE 3 : CALCUL INCRÉMENTAL
+# ============================================
+
+def calculate_next_rider_incremental(schedule, params, start_from=None):
+    """
+    Calcule le prochain cavalier en mode incrémental (recherche pas à pas)
+    
+    Output: dict avec 'id', 'dressage', 'cross', 'saut'
+    """
+    if start_from is None:
+        if schedule:
+            start_from = schedule[-1]['dressage'][0] + timedelta(minutes=1)
+        else:
+            start_from = parse_start_time(params['start_time'])
+    
+    step = timedelta(seconds=30)
+    start_candidate = start_from
+    
+    # Recherche du premier slot valide
+    max_iterations = 2000  # Sécurité
+    for _ in range(max_iterations):
+        if verify_no_conflicts(start_candidate, schedule, params):
+            times = build_single_rider_times(start_candidate, params)
+            return {
+                'id': len(schedule) + 1,
+                'dressage': times['dressage'],
+                'cross': times['cross'],
+                'saut': times['saut']
+            }
+        start_candidate += step
+    
+    raise RuntimeError("Impossible de trouver un slot valide après 2000 itérations")
+
+
+# ============================================
+# COUCHE 4 : DÉTECTION DE PATTERN (shared_arena == True)
+# ============================================
+
+def find_block_size_and_pattern(params, start_time):
+    """
+    Trouve la taille du bloc σ et le pattern pour shared_arena == True
+    
+    Output: dict avec 'sigma', 'lambda', 'block_schedule'
+    """
+    schedule_bloc = []
+    
+    # Calculer cavaliers incrémentalement jusqu'à trouver le bloc
+    for k in range(1, 100):  # Limite sécurité (théoriquement toujours < 50)
+        rider = calculate_next_rider_incremental(schedule_bloc, params, start_time if k == 1 else None)
+        schedule_bloc.append(rider)
+        
+        # TEST : Cavalier k commence-t-il après que cavalier 1 ait fini ?
+        cavalier_1_end = schedule_bloc[0]['saut'][1]
+        cavalier_1_fully_free = cavalier_1_end + timedelta(minutes=params['reset_saut'])
+        cavalier_k_start = schedule_bloc[-1]['dressage'][0]
+        
+        if cavalier_k_start >= cavalier_1_fully_free:
+            # On a trouvé σ !
+            sigma = k
+            lambda_minutes = (schedule_bloc[-1]['dressage'][0] - schedule_bloc[0]['dressage'][0]).total_seconds() / 60
+            
+            return {
+                'sigma': sigma,
+                'lambda': lambda_minutes,
+                'block_schedule': schedule_bloc
+            }
+    
+    raise RuntimeError("Pattern non trouvé après 100 cavaliers (impossible théoriquement)")
+
+
+def duplicate_pattern(block_schedule, lambda_minutes, total_riders, params):
+    """
+    Duplique le pattern pour générer tous les cavaliers
+    
+    Output: Liste complète de tous les cavaliers
+    """
+    sigma = len(block_schedule)
+    schedule = []
+    
+    # Calculer le nombre de blocs complets et cavaliers restants
+    num_full_blocks = total_riders // sigma
+    remaining_riders = total_riders % sigma
+    
+    # Dupliquer les blocs complets
+    for block_num in range(num_full_blocks):
+        for idx_in_block in range(sigma):
+            original_rider = block_schedule[idx_in_block]
+            offset = timedelta(minutes=lambda_minutes * block_num)
+            
+            new_start = original_rider['dressage'][0] + offset
+            times = build_single_rider_times(new_start, params)
+            
+            schedule.append({
+                'id': block_num * sigma + idx_in_block + 1,
+                'dressage': times['dressage'],
+                'cross': times['cross'],
+                'saut': times['saut']
+            })
+    
+    # Cavaliers restants (bloc partiel)
+    for idx in range(remaining_riders):
+        original_rider = block_schedule[idx]
+        offset = timedelta(minutes=lambda_minutes * num_full_blocks)
+        
+        new_start = original_rider['dressage'][0] + offset
+        times = build_single_rider_times(new_start, params)
+        
+        schedule.append({
+            'id': num_full_blocks * sigma + idx + 1,
+            'dressage': times['dressage'],
+            'cross': times['cross'],
+            'saut': times['saut']
+        })
+    
+    return schedule
+
+
+# ============================================
+# COUCHE 5 : GÉNÉRATEURS DE PLANNING
+# ============================================
+
+def generate_schedule_simple_pattern(params):
+    """
+    Génération pour shared_arena == False
+    Pattern simple en escalier avec décalage constant
+    
+    Complexité: O(N)
+    """
+    start_time = parse_start_time(params['start_time'])
+    nb_cavaliers = params['nb_cavaliers']
+    
+    # Calcul du décalage constant
+    delta = calculate_max_reset(params) + calculate_max_duration(params)
+    
+    schedule = []
+    for i in range(nb_cavaliers):
+        start_i = start_time + timedelta(minutes=i * delta)
+        times = build_single_rider_times(start_i, params)
+        
+        schedule.append({
+            'id': i + 1,
+            'dressage': times['dressage'],
+            'cross': times['cross'],
+            'saut': times['saut']
+        })
+    
+    return schedule
+
+
+def generate_schedule_with_block_pattern(params):
+    """
+    Génération pour shared_arena == True
+    Détection du bloc + duplication
+    
+    Complexité: O(σ + N) où σ << N
+    """
+    start_time = parse_start_time(params['start_time'])
+    nb_cavaliers = params['nb_cavaliers']
+    
+    # PHASE 1 : Trouver le pattern
+    pattern = find_block_size_and_pattern(params, start_time)
+    
+    # PHASE 2 : Dupliquer pour tous les cavaliers
+    schedule = duplicate_pattern(
+        pattern['block_schedule'],
+        pattern['lambda'],
+        nb_cavaliers,
+        params
+    )
+    
+    return schedule
+
+
+def generate_schedule_manual(params):
+    """
+    Génération en mode manuel (logique préservée)
+    """
+    start_time = parse_start_time(params['start_time'])
+    nb_cavaliers = params['nb_cavaliers']
+    
     try:
-        start_time_global = datetime.strptime(params['start_time'], "%H:%M")
+        raw_intervals = params['manual_list'].replace(' ', '').split(',')
+        intervals = [float(x) for x in raw_intervals if x]
+    except ValueError:
+        st.error("Erreur dans la liste manuelle.")
+        return []
+    
+    if intervals:
+        while len(intervals) < nb_cavaliers:
+            intervals.append(intervals[-1])
+    else:
+        intervals = [5] * nb_cavaliers
+    
+    schedule = []
+    current_start = start_time
+    
+    for i in range(nb_cavaliers):
+        times = build_single_rider_times(current_start, params)
+        schedule.append({
+            'id': i + 1,
+            'dressage': times['dressage'],
+            'cross': times['cross'],
+            'saut': times['saut']
+        })
+        
+        if i < len(intervals):
+            current_start = current_start + timedelta(minutes=intervals[i])
+    
+    return schedule
+
+
+# ============================================
+# COUCHE 6 : DISPATCHER PRINCIPAL
+# ============================================
+
+def calculer_planning(params):
+    """
+    Point d'entrée principal - Dispatcher
+    
+    Output: (schedule, computation_time) ou ([], None) si erreur
+    """
+    start_computation = time.time()
+    
+    try:
+        # Validation du format horaire
+        parse_start_time(params['start_time'])
     except ValueError:
         st.error("Format d'heure invalide.")
-        return []
-
-    nb_cavaliers = params['nb_cavaliers']
-    schedule = []
-    pause = _parse_pause(params, start_time_global)
-
+        return [], None
+    
+    # Dispatch selon le mode
     if params['mode'] == 'Manuel':
-        try:
-            raw_intervals = params['manual_list'].replace(' ', '').split(',')
-            intervals = [float(x) for x in raw_intervals if x]
-        except ValueError:
-            st.error("Erreur dans la liste manuelle.")
-            return []
-        
-        if intervals:
-            while len(intervals) < nb_cavaliers: intervals.append(intervals[-1])
-        else: intervals = [5] * nb_cavaliers
-            
-        current_start = start_time_global
-        for i in range(nb_cavaliers):
-            times = _build_times(current_start, params, pause)
-            schedule.append({'id': i+1, 'dressage': times['dressage'], 'cross': times['cross'], 'saut': times['saut']})
-            if i < len(intervals):
-                next_start = current_start + timedelta(minutes=intervals[i])
-                # Si le prochain départ tombe pendant le temps mort, le décaler après
-                if pause and pause['start'] <= next_start < pause['end']:
-                    next_start = pause['end']
-                current_start = next_start
-        return schedule
-
-    else: # MODE AUTO
-        step = timedelta(seconds=30)
-        
+        schedule = generate_schedule_manual(params)
+        computation_time = time.time() - start_computation
+        return schedule, computation_time
+    
+    elif params['mode'] == 'Optimisation Auto':
         progress_bar = st.progress(0)
         
-        for i in range(nb_cavaliers):
-            start_candidate = schedule[-1]['dressage'][0] + timedelta(minutes=1) if i > 0 else start_time_global
-            
-            while True:
-                if verifier_conflit_individuel(start_candidate, schedule, params, pause): break
-                start_candidate += step
-                if (start_candidate - start_time_global).total_seconds() > 43200: # 12h max
-                    st.error("Impossible de trouver une solution (trop de contraintes).")
-                    return []
+        if not params['shared_arena']:
+            # CAS 1 : Terrains séparés - Pattern simple
+            schedule = generate_schedule_simple_pattern(params)
+        else:
+            # CAS 2 : Terrain partagé - Détection de bloc
+            schedule = generate_schedule_with_block_pattern(params)
+        
+        progress_bar.progress(1.0)
+        computation_time = time.time() - start_computation
+        return schedule, computation_time
+    
+    return [], None
 
-            times = _build_times(start_candidate, params, pause)
-            schedule.append({'id': i+1, 'dressage': times['dressage'], 'cross': times['cross'], 'saut': times['saut']})
-            
-            progress_bar.progress((i + 1) / nb_cavaliers)
-            
-        return schedule
-
-# ==========================================
-# 2. INTERFACE WEB (STREAMLIT)
-# ==========================================
+# ============================================
+# COUCHE 7 : INTERFACE STREAMLIT
+# ============================================
 
 st.set_page_config(page_title="Planning CCE", layout="wide")
 
@@ -249,8 +414,8 @@ st.markdown(
             .sidebar-spacer { flex: 1 1 auto; }
         </style>
         <div class="made-by">
-            Made by <a href="http://www.jeremydigard.com" target="_blank">Jérémy Digard</a> for
-            <a href="https://www.equissima.ch" target="_blank">Equissima</a>
+            Made by <a href="https://jeremydigard.com" target="_blank">Jérémy Digard</a> for
+            <a href="https://equissima.ch" target="_blank">Equissima</a>
             2025- 2026
         </div>
         """,
@@ -294,29 +459,6 @@ with st.sidebar:
         if shared_arena:
             transition_shared = st.number_input("Temps transition D/S", value=5.0)
 
-    st.markdown("---")
-    st.header("3. Temps morts (accident/maintenance)")
-    pause_enabled = st.checkbox("Activer un temps mort")
-    pause_time = ""
-    pause_duration = 0.0
-    pause_locations = []
-    if pause_enabled:
-        pause_time = st.text_input("Horaire du temps mort", "14:30")
-        pause_duration = st.number_input("Durée (minutes)", min_value=0.0, value=10.0)
-        st.write("Lieu(x) du temps mort :")
-        if shared_arena:
-            if st.checkbox("Dressage/Saut (même terrain)", key="pause_dress_saut"):
-                pause_locations.append("Dressage/Saut (même terrain)")
-            if st.checkbox("Cross", key="pause_cross"):
-                pause_locations.append("Cross")
-        else:
-            if st.checkbox("Dressage", key="pause_dressage"):
-                pause_locations.append("Dressage")
-            if st.checkbox("Cross", key="pause_cross"):
-                pause_locations.append("Cross")
-            if st.checkbox("Saut", key="pause_saut"):
-                pause_locations.append("Saut")
-
     st.markdown('<div class="sidebar-spacer"></div>', unsafe_allow_html=True)
 
     generate_btn = st.button("Générer le Planning", type="primary", use_container_width=True)
@@ -330,14 +472,19 @@ if generate_btn:
         'd_cross': d_cross, 'd_pause2': d_pause2, 'd_saut': d_saut,
         'mode': mode, 'manual_list': manual_list,
         'reset_dressage': reset_dressage, 'reset_cross': reset_cross, 'reset_saut': reset_saut,
-        'shared_arena': shared_arena, 'transition_shared': transition_shared,
-        'pause_enabled': pause_enabled, 'pause_time': pause_time,
-        'pause_duration': pause_duration, 'pause_locations': pause_locations
+        'shared_arena': shared_arena, 'transition_shared': transition_shared
     }
 
-    schedule = calculer_planning(params)
+    schedule, computation_time = calculer_planning(params)
 
     if schedule:
+        # Affichage du temps de traitement
+        if computation_time is not None:
+            if computation_time < 1:
+                st.info(f"⏱️ Temps de calcul du planning : {computation_time*1000:.1f} ms")
+            else:
+                st.info(f"⏱️ Temps de calcul du planning : {computation_time:.2f} s")
+        
         # Affichage du graphe
         fig, ax = plt.subplots(figsize=(12, nb_cavaliers * 0.5 + 2)) # Hauteur dynamique
         colors = {'dressage': '#4472C4', 'cross': '#548235', 'saut': '#C00000'}
