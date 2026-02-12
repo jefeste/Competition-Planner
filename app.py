@@ -474,7 +474,7 @@ def optimize_parameters(base_params, top_n=5, progress_callback=None):
     Output: liste de tuples (params, temps_total, gain)
     """
     # Générer toutes les combinaisons
-    combinations = generate_parameter_combinations(base_params, delta=3, step=1)
+    combinations = generate_parameter_combinations(base_params, delta=2, step=1)
     total_combinations = len(combinations)
     
     results = []
