@@ -183,7 +183,9 @@ def find_block_size_and_pattern(params, start_time):
         cavalier_k_start = schedule_bloc[-1]['dressage'][0]
         
         if cavalier_k_start >= cavalier_1_fully_free:
-            # On a trouvé σ !
+            # On a trouvé σ = k !
+            # Lambda = intervalle entre le début du cavalier 1 et le début du cavalier k
+            # Le cavalier k+1 (premier du prochain bloc) peut commencer au même moment que k
             sigma = k
             lambda_minutes = (schedule_bloc[-1]['dressage'][0] - schedule_bloc[0]['dressage'][0]).total_seconds() / 60
             
@@ -474,7 +476,7 @@ def optimize_parameters(base_params, top_n=5, progress_callback=None):
     Output: liste de tuples (params, temps_total, gain)
     """
     # Générer toutes les combinaisons
-    combinations = generate_parameter_combinations(base_params, delta=2, step=1)
+    combinations = generate_parameter_combinations(base_params, delta=3, step=1)
     total_combinations = len(combinations)
     
     results = []
