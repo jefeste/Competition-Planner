@@ -343,11 +343,15 @@ def generate_schedule_manual(params):
 # COUCHE 6 : DISPATCHER PRINCIPAL
 # ============================================
 
-def calculer_planning(params):
+def calculer_planning(params, silent=False):
     """
     Point d'entrée principal - Dispatcher
     
     Output: (schedule, computation_time) ou ([], None) si erreur
+    
+    Args:
+        params: dict avec les paramètres
+        silent: si True, ne crée pas d'éléments UI (pour l'optimisation en batch)
     """
     start_computation = time.time()
     
@@ -355,7 +359,8 @@ def calculer_planning(params):
         # Validation du format horaire
         parse_start_time(params['start_time'])
     except ValueError:
-        st.error("Format d'heure invalide.")
+        if not silent:
+            st.error("Format d'heure invalide.")
         return [], None
     
     # Dispatch selon le mode
@@ -365,7 +370,8 @@ def calculer_planning(params):
         return schedule, computation_time
     
     elif params['mode'] == 'Optimisation Auto':
-        progress_bar = st.progress(0)
+        if not silent:
+            progress_bar = st.progress(0)
         
         if not params['shared_arena']:
             # CAS 1 : Terrains séparés - Pattern simple
@@ -374,7 +380,8 @@ def calculer_planning(params):
             # CAS 2 : Terrain partagé - Détection de bloc
             schedule = generate_schedule_with_block_pattern(params)
         
-        progress_bar.progress(1.0)
+        if not silent:
+            progress_bar.progress(1.0)
         computation_time = time.time() - start_computation
         return schedule, computation_time
     
@@ -482,13 +489,13 @@ def optimize_parameters(base_params, top_n=5, progress_callback=None):
     results = []
     
     # Calculer le temps total de base
-    base_schedule, _ = calculer_planning(base_params)
+    base_schedule, _ = calculer_planning(base_params, silent=True)
     base_duration = calculate_total_duration(base_schedule) if base_schedule else float('inf')
     
     # Tester chaque combinaison
     for idx, test_params in enumerate(combinations):
         try:
-            schedule, _ = calculer_planning(test_params)
+            schedule, _ = calculer_planning(test_params, silent=True)
             if schedule:
                 duration = calculate_total_duration(schedule)
                 gain = base_duration - duration
