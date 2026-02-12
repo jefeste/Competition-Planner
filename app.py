@@ -186,7 +186,7 @@ def find_block_size_and_pattern(params, start_time):
             # On a trouvé σ = k !
             # Lambda = intervalle entre le début du cavalier 1 et le début du cavalier k
             # Le cavalier k+1 (premier du prochain bloc) peut commencer au même moment que k
-            sigma = k
+            sigma = k-1
             lambda_minutes = (schedule_bloc[-1]['dressage'][0] - schedule_bloc[0]['dressage'][0]).total_seconds() / 60
             
             return {
