@@ -204,7 +204,7 @@ def duplicate_pattern(block_schedule, lambda_minutes, total_riders, params):
     
     Output: Liste complète de tous les cavaliers
     """
-    sigma = len(block_schedule)
+    sigma = len(block_schedule)-1
     schedule = []
     
     # Calculer le nombre de blocs complets et cavaliers restants
