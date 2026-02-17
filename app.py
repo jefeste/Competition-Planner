@@ -738,18 +738,10 @@ if optimize_btn:
             st.metric(label, f"{term['value']:.1f} min")
             st.caption(term['formula'])
     
-    # Durée totale estimée
-    st.markdown("---")
-    st.subheader("⏱️ Estimation de la durée totale")
-    st.latex(r"T_{total} = K_0 + (Q-1) \times \lambda = " + f"{L_total:.1f} + {Q-1} \\times {lam:.1f} = {T_total_estimated:.1f}" + r"\text{ min}")
-    
     hours = int(T_total_estimated // 60)
     mins = int(T_total_estimated % 60)
     st.info(f"📐 Durée estimée : **{hours}h{mins:02d}** pour {Q} cavaliers")
     
-    # --- 3. Tableau de sensibilité (leviers primaires) ---
-    st.markdown("---")
-    st.subheader("🎯 Leviers d'optimisation (réduction du goulot)")
     
     sensitivity = compute_sensitivity_table(params, info, max_delta=5)
     
@@ -766,31 +758,6 @@ if optimize_btn:
             coeff_text = f" (×{coeff} sur λ)" if coeff > 1 else ""
             
             st.markdown(f"**{lever_name}**{coeff_text}")
-            
-            # Construire le tableau
-            table_data = []
-            for r in lever_rows:
-                bp_marker = " ⚠️" if r['breakpoint'] else ""
-                table_data.append({
-                    'Réduction': f"-{r['delta']} min",
-                    'Nouvelle valeur': f"{r['new_value']:.1f} min",
-                    'Nouveau λ': f"{r['new_lambda']:.1f} min",
-                    'Δλ': f"-{r['delta_lambda']:.1f} min",
-                    f'Gain total ({Q} cav.)': f"{r['gain_total']:.1f} min{bp_marker}",
-                })
-            
-            st.table(table_data)
-            
-            # Breakpoint warning
-            bp_rows = [r for r in lever_rows if r['breakpoint']]
-            if bp_rows:
-                bp = bp_rows[0]
-                st.warning(
-                    f"⚠️ Au-delà de -{bp['delta']} min, le goulot bascule vers "
-                    f"**{second['name']}** (λ = {second['value']:.1f} min). "
-                    f"Réduction supplémentaire sans effet sur λ."
-                )
-    
  
     # --- Résumé visuel ---
     st.markdown("---")
