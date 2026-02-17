@@ -728,8 +728,9 @@ if optimize_btn:
     # --- 2. Diagnostic en 1 ligne ---
     st.error(f"**Goulot d'étranglement : {bottleneck['name']}**")    
     # Afficher tous les termes
-    st.subheader("Temps de réinitialisation par étape")
+    st.subheader("Temps de par étape")
     
+    cols = st.columns(len(info['all_terms']))
     for i, term in enumerate(info['all_terms']):
         with cols[i]:
             is_bottleneck = (term == bottleneck)
