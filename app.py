@@ -602,11 +602,11 @@ with st.sidebar:
     nb_cavaliers = st.number_input("Nombre de cavaliers", min_value=1, value=10)
     
     st.subheader("Durées (minutes)")
-    d_dressage = st.number_input("Dressage", value=4.0)
-    d_pause1 = st.number_input("Pause 1 (vers Cross)", value=15.0)
-    d_cross = st.number_input("Cross", value=4.0)
-    d_pause2 = st.number_input("Pause 2 (vers Saut)", value=7.0)
-    d_saut = st.number_input("Saut", value=2.0)
+    d_dressage = st.number_input("Dressage", min_value=1, value=4)
+    d_pause1 = st.number_input("Pause 1 (vers Cross)",min_value=1,  value=15)
+    d_cross = st.number_input("Cross", min_value=1, value=4)
+    d_pause2 = st.number_input("Pause 2 (vers Saut)", min_value=1, value=7)
+    d_saut = st.number_input("Saut", min_value=1, value=2)
     
     st.markdown("---")
     st.header("2. Mode de Calcul")
@@ -621,13 +621,13 @@ with st.sidebar:
     else:
         st.info("Temps de remise en état (Reset) entre 2 cavaliers :")
         col1, col2, col3 = st.columns(3)
-        with col1: reset_dressage = st.number_input("Reset Dress.", value=1.0)
-        with col2: reset_cross = st.number_input("Reset Cross", value=2.0)
-        with col3: reset_saut = st.number_input("Reset Saut", value=1.5)
+        with col1: reset_dressage = st.number_input("Reset Dress.", min_value=0, value=1)
+        with col2: reset_cross = st.number_input("Reset Cross", min_value=0, value=2)
+        with col3: reset_saut = st.number_input("Reset Saut", min_value=0, value=1)
         
         shared_arena = st.checkbox("Même terrain (Dressage / Saut)", value=True)
         if shared_arena:
-            transition_shared = st.number_input("Temps transition D/S", value=5.0)
+            transition_shared = st.number_input("Temps transition D/S", min_value=0, value=5)
 
     st.markdown('<div class="sidebar-spacer"></div>', unsafe_allow_html=True)
 
