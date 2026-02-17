@@ -712,7 +712,7 @@ if optimize_btn:
     }
     
     st.markdown("---")
-    st.header("🔍 Diagnostic & Optimisation (Analyse Max-Plus)")
+    st.header("Diagnostic & Optimisation")
     
     # --- 1. Calcul du goulot ---
     info = compute_bottleneck(params)
@@ -726,98 +726,16 @@ if optimize_btn:
     T_total_estimated = L_total + (Q - 1) * lam
     
     # --- 2. Diagnostic en 1 ligne ---
-    st.error(f"🚧 **Goulot d'étranglement : {bottleneck['name']}** — λ = {lam:.1f} min")
-    st.caption(f"Formule : {bottleneck['formula']} = {bottleneck['value']:.1f} min")
-    
+    st.error(f"**Goulot d'étranglement : {bottleneck['name']}**")    
     # Afficher tous les termes
-    st.subheader("📊 Valeur propre par étape")
+    st.subheader("Temps de réinitialisation par étape")
     
-    cols = st.columns(len(info['all_terms']))
     for i, term in enumerate(info['all_terms']):
         with cols[i]:
             is_bottleneck = (term == bottleneck)
             label = "🚧 " + term['name'] if is_bottleneck else term['name']
             st.metric(label, f"{term['value']:.1f} min")
             st.caption(term['formula'])
-    
-    # Durée totale estimée
-    st.markdown("---")
-    st.subheader("⏱️ Estimation de la durée totale")
-    st.latex(r"T_{total} = K_0 + (Q-1) \times \lambda = " + f"{L_total:.1f} + {Q-1} \\times {lam:.1f} = {T_total_estimated:.1f}" + r"\text{ min}")
-    
-    hours = int(T_total_estimated // 60)
-    mins = int(T_total_estimated % 60)
-    st.info(f"📐 Durée estimée : **{hours}h{mins:02d}** pour {Q} cavaliers")
-    
-    # --- 3. Tableau de sensibilité (leviers primaires) ---
-    st.markdown("---")
-    st.subheader("🎯 Leviers d'optimisation (réduction du goulot)")
-    
-    sensitivity = compute_sensitivity_table(params, info, max_delta=5)
-    
-    if sensitivity['rows']:
-        # Organiser par levier
-        levers_seen = []
-        for row in sensitivity['rows']:
-            if row['lever'] not in levers_seen:
-                levers_seen.append(row['lever'])
-        
-        for lever_name in levers_seen:
-            lever_rows = [r for r in sensitivity['rows'] if r['lever'] == lever_name]
-            coeff = lever_rows[0]['coeff']
-            coeff_text = f" (×{coeff} sur λ)" if coeff > 1 else ""
-            
-            st.markdown(f"**{lever_name}**{coeff_text}")
-            
-            # Construire le tableau
-            table_data = []
-            for r in lever_rows:
-                bp_marker = " ⚠️" if r['breakpoint'] else ""
-                table_data.append({
-                    'Réduction': f"-{r['delta']} min",
-                    'Nouvelle valeur': f"{r['new_value']:.1f} min",
-                    'Nouveau λ': f"{r['new_lambda']:.1f} min",
-                    'Δλ': f"-{r['delta_lambda']:.1f} min",
-                    f'Gain total ({Q} cav.)': f"{r['gain_total']:.1f} min{bp_marker}",
-                })
-            
-            st.table(table_data)
-            
-            # Breakpoint warning
-            bp_rows = [r for r in lever_rows if r['breakpoint']]
-            if bp_rows:
-                bp = bp_rows[0]
-                st.warning(
-                    f"⚠️ Au-delà de -{bp['delta']} min, le goulot bascule vers "
-                    f"**{second['name']}** (λ = {second['value']:.1f} min). "
-                    f"Réduction supplémentaire sans effet sur λ."
-                )
-    
-    # --- 4. Levier secondaire : pauses ---
-    if sensitivity['pause_levers']:
-        st.markdown("---")
-        st.subheader("📎 Leviers secondaires (pauses entre épreuves)")
-        st.caption("Réduire une pause gagne exactement la même durée, quel que soit le nombre de cavaliers (offset constant K₀).")
-        
-        pause_names = []
-        for pl in sensitivity['pause_levers']:
-            if pl['lever'] not in pause_names:
-                pause_names.append(pl['lever'])
-        
-        for pname in pause_names:
-            p_rows = [r for r in sensitivity['pause_levers'] if r['lever'] == pname]
-            current_val = params[p_rows[0]['param']]
-            st.markdown(f"**{pname}** (actuel : {current_val:.1f} min)")
-            
-            table_data = []
-            for r in p_rows:
-                table_data.append({
-                    'Réduction': f"-{r['delta']} min",
-                    'Nouvelle valeur': f"{r['new_value']:.1f} min",
-                    'Gain total': f"{r['gain_total']:.0f} min",
-                })
-            
-            st.table(table_data)
     
     # --- 5. Résumé visuel ---
     st.markdown("---")
