@@ -738,11 +738,6 @@ if optimize_btn:
             st.metric(label, f"{term['value']:.1f} min")
             st.caption(term['formula'])
     
-    hours = int(T_total_estimated // 60)
-    mins = int(T_total_estimated % 60)
-    st.info(f"📐 Durée estimée : **{hours}h{mins:02d}** pour {Q} cavaliers")
-    
-    
     sensitivity = compute_sensitivity_table(params, info, max_delta=5)
     
     if sensitivity['rows']:
