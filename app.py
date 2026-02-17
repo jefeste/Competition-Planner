@@ -632,11 +632,6 @@ with st.sidebar:
     st.markdown('<div class="sidebar-spacer"></div>', unsafe_allow_html=True)
 
     generate_btn = st.button("Générer le Planning", type="primary", use_container_width=True)
-    
-    # Bouton d'optimisation (en mode Auto)
-    optimize_btn = False
-    if mode == "Optimisation Auto":
-        optimize_btn = st.button("🔍 Diagnostic & Optimisation", use_container_width=True)
 
 # --- CORPS PRINCIPAL ---
 
@@ -697,89 +692,86 @@ if generate_btn:
         
         st.pyplot(fig)
         st.success(f"Planning généré pour {nb_cavaliers} cavaliers !")
-
-
-# --- DIAGNOSTIC & OPTIMISATION (Analyse Max-Plus) ---
-
-if optimize_btn:
-    params = {
-        'start_time': start_time, 'nb_cavaliers': int(nb_cavaliers),
-        'd_dressage': d_dressage, 'd_pause1': d_pause1,
-        'd_cross': d_cross, 'd_pause2': d_pause2, 'd_saut': d_saut,
-        'mode': mode, 'manual_list': manual_list,
-        'reset_dressage': reset_dressage, 'reset_cross': reset_cross, 'reset_saut': reset_saut,
-        'shared_arena': shared_arena, 'transition_shared': transition_shared
-    }
-    
-    st.markdown("---")
-    st.header("Diagnostic & Optimisation")
-    
-    # --- 1. Calcul du goulot ---
-    info = compute_bottleneck(params)
-    Q = int(nb_cavaliers)
-    lam = info['lambda']
-    bottleneck = info['bottleneck']
-    second = info['second']
-    
-    # Pipeline delay (K0) = traversée complète du premier cavalier
-    L_total = d_dressage + d_pause1 + d_cross + d_pause2 + d_saut
-    T_total_estimated = L_total + (Q - 1) * lam
-    
-    # --- 2. Diagnostic en 1 ligne ---
-    st.error(f"**Goulot d'étranglement : {bottleneck['name']}**")    
-
-    sensitivity = compute_sensitivity_table(params, info, max_delta=5)
-    
-    if sensitivity['rows']:
-        # Organiser par levier
-        levers_seen = []
-        for row in sensitivity['rows']:
-            if row['lever'] not in levers_seen:
-                levers_seen.append(row['lever'])
         
-        for lever_name in levers_seen:
-            lever_rows = [r for r in sensitivity['rows'] if r['lever'] == lever_name]
-            coeff = lever_rows[0]['coeff']
-            coeff_text = f" (×{coeff} sur λ)" if coeff > 1 else ""
+        # --- DIAGNOSTIC & OPTIMISATION (auto en mode Auto) ---
+        if mode == "Optimisation Auto":
+            st.markdown("---")
+            st.header("🔍 Diagnostic & Optimisation")
             
-            st.markdown(f"**{lever_name}**{coeff_text}")
- 
-    # --- Résumé visuel ---
-    st.markdown("---")
-    st.subheader("Impact comparé des leviers")
-    
-    # Collecter tous les gains pour le graphique
-    chart_labels = []
-    chart_gains = []
-    chart_colors = []
-    
-    for row in sensitivity['rows']:
-        label = f"{row['lever']} -{row['delta']}min"
-        chart_labels.append(label)
-        chart_gains.append(row['gain_total'])
-        chart_colors.append('#C00000' if row['breakpoint'] else '#4472C4')
-    
-    if chart_labels:
-        fig_opt, ax_opt = plt.subplots(figsize=(10, max(3, len(chart_labels) * 0.4)))
-        
-        y_pos = range(len(chart_labels))
-        ax_opt.barh(y_pos, chart_gains, color=chart_colors)
-        ax_opt.set_yticks(y_pos)
-        ax_opt.set_yticklabels(chart_labels, fontsize=9)
-        ax_opt.set_xlabel('Gain total (minutes)')
-        ax_opt.set_title(f'Gain sur la durée totale ({Q} cavaliers)')
-        ax_opt.grid(True, axis='x', alpha=0.3)
-        ax_opt.invert_yaxis()
-        
-        for i, g in enumerate(chart_gains):
-            ax_opt.text(g + 0.3, i, f'{g:.0f} min', va='center', fontsize=9, fontweight='bold')
-        
-        # Légende
-        from matplotlib.patches import Patch
-        legend_elements = [
-            Patch(facecolor='#4472C4', label='Levier primaire (λ)'),
-            Patch(facecolor='#C00000', label='Après breakpoint'),
-        ]
-        ax_opt.legend(handles=legend_elements, loc='lower right', fontsize=8)
-        
-        st.pyplot(fig_opt)
+            info = compute_bottleneck(params)
+            Q = int(nb_cavaliers)
+            lam = info['lambda']
+            bottleneck = info['bottleneck']
+            second = info['second']
+            
+            # Pipeline delay
+            L_total = d_dressage + d_pause1 + d_cross + d_pause2 + d_saut
+            T_total_estimated = L_total + (Q - 1) * lam
+            
+            # 1. Diagnostic en 1 ligne
+            st.error(f"**Goulot d'étranglement : {bottleneck['name']}  (λ = {lam:.1f} min)")
+            
+            col_d1, col_d2 = st.columns(2)
+            with col_d1:
+                st.metric("λ (cadence)", f"{lam:.1f} min/cavalier")
+            with col_d2:
+                st.metric("Durée totale estimée", f"{T_total_estimated:.0f} min")
+            
+            # 2. Détail des termes
+            st.caption("Détail des étapes (le max détermine λ) :")
+            for term in info['all_terms']:
+                marker = "🔴" if term == bottleneck else "⚪"
+                st.text(f"  {marker} {term['name']} = {term['formula']} = {term['value']:.1f} min")
+            
+            if second:
+                gap = lam - second['value']
+                st.info(f"Marge avant basculement vers **{second['name']}** : {gap:.1f} min")
+            
+            # 3. Tableau de sensibilité
+            st.markdown("---")
+            st.subheader("Impact des leviers")
+            
+            sensitivity = compute_sensitivity_table(params, info, max_delta=5)
+            
+            chart_labels = []
+            chart_gains = []
+            chart_colors = []
+            
+            for row in sensitivity['rows']:
+                label = f"{row['lever']} −{row['delta']}min"
+                chart_labels.append(label)
+                chart_gains.append(row['gain_total'])
+                chart_colors.append('#C00000' if row['breakpoint'] else '#4472C4')
+            
+            # Ajouter les pauses comme leviers secondaires
+            for row in sensitivity['pause_levers']:
+                if row['delta'] <= 3:  # limiter l'affichage
+                    label = f"{row['lever']} −{row['delta']}min (fixe)"
+                    chart_labels.append(label)
+                    chart_gains.append(row['gain_total'])
+                    chart_colors.append('#888888')
+            
+            if chart_labels:
+                from matplotlib.patches import Patch
+                fig_opt, ax_opt = plt.subplots(figsize=(10, max(3, len(chart_labels) * 0.35)))
+                
+                y_pos = range(len(chart_labels))
+                ax_opt.barh(y_pos, chart_gains, color=chart_colors)
+                ax_opt.set_yticks(y_pos)
+                ax_opt.set_yticklabels(chart_labels, fontsize=9)
+                ax_opt.set_xlabel('Gain total (minutes)')
+                ax_opt.set_title(f'Gain sur la durée totale ({Q} cavaliers)')
+                ax_opt.grid(True, axis='x', alpha=0.3)
+                ax_opt.invert_yaxis()
+                
+                for i, g in enumerate(chart_gains):
+                    ax_opt.text(g + 0.3, i, f'{g:.0f} min', va='center', fontsize=9, fontweight='bold')
+                
+                legend_elements = [
+                    Patch(facecolor='#4472C4', label='Levier primaire (λ)'),
+                    Patch(facecolor='#C00000', label='Breakpoint (goulot bascule)'),
+                    Patch(facecolor='#888888', label='Levier secondaire (pauses, gain fixe)'),
+                ]
+                ax_opt.legend(handles=legend_elements, loc='lower right', fontsize=8)
+                
+                st.pyplot(fig_opt)
