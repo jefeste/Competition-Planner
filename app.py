@@ -389,129 +389,163 @@ def calculer_planning(params, silent=False):
 
 
 # ============================================
-# COUCHE 6.5 : OPTIMISATION DE PARAMÈTRES
+# COUCHE 6.5 : DIAGNOSTIC ANALYTIQUE (Max-Plus)
 # ============================================
 
-def is_valid_parameter_set(params):
+def compute_bottleneck(params):
     """
-    Vérifie qu'un set de paramètres est valide
+    Identifie le goulot d'étranglement par analyse spectrale Max-Plus.
     
-    Contraintes:
-    - Tous les paramètres doivent être > 0
-    - Les transitions doivent permettre le déplacement physique
+    λ = max(p_i + r_i / c_i) pour chaque étape i.
+    
+    En mode shared_arena:
+        λ = max(p_dressage + p_saut + 2·τ, (p_cross + r_cross) / c_cross)
+    En mode séparé:
+        λ = max(p_dressage + r_dressage, p_cross + r_cross, p_saut + r_saut)
+    
+    Output: dict avec 'lambda', 'bottleneck_name', 'all_terms'
     """
-    if params['d_pause1'] <= 0 or params['d_pause2'] <= 0:
-        return False
-    if params['reset_dressage'] < 0 or params['reset_cross'] < 0 or params['reset_saut'] < 0:
-        return False
-    if params['transition_shared'] < 0:
-        return False
-    
-    # Contraintes minimales raisonnables (optionnel)
-    if params['d_pause1'] < 2 or params['d_pause2'] < 2:  # Minimum 2 min pour se déplacer
-        return False
-    if params['transition_shared'] < 1:  # Minimum 1 min de buffer
-        return False
-    
-    return True
-
-
-def calculate_total_duration(schedule):
-    """
-    Calcule le temps total d'un planning en minutes
-    
-    Temps total = heure_fin_dernier_cavalier - heure_début_premier_cavalier
-    """
-    if not schedule:
-        return float('inf')
-    
-    start = schedule[0]['dressage'][0]
-    end = schedule[-1]['saut'][1]
-    
-    return (end - start).total_seconds() / 60
-
-
-def generate_parameter_combinations(base_params, delta=3, step=1):
-    """
-    Génère toutes les combinaisons de paramètres autour des valeurs de base
-    
-    Input:
-        - base_params: dict avec les paramètres actuels
-        - delta: écart maximum en minutes (±delta)
-        - step: pas d'incrémentation en minutes
-    
-    Output: liste de dicts de paramètres
-    """
-    params_to_optimize = ['d_pause1', 'd_pause2', 'reset_dressage', 
-                          'reset_cross', 'reset_saut', 'transition_shared']
-    
-    # Générer les valeurs pour chaque paramètre
-    param_ranges = {}
-    for param in params_to_optimize:
-        base_value = base_params[param]
-        values = []
-        for offset in range(-delta, delta + 1, step):
-            values.append(base_value + offset)
-        param_ranges[param] = values
-    
-    # Générer toutes les combinaisons
-    import itertools
-    combinations = []
-    
-    keys = list(param_ranges.keys())
-    for values in itertools.product(*[param_ranges[k] for k in keys]):
-        test_params = base_params.copy()
-        for i, key in enumerate(keys):
-            test_params[key] = values[i]
+    if params['shared_arena']:
+        tau = params['transition_shared']
+        term_shared = params['d_dressage'] + params['d_saut'] + 2 * tau
+        term_cross = params['d_cross'] + params['reset_cross']
         
-        # Valider les paramètres
-        if is_valid_parameter_set(test_params):
-            combinations.append(test_params)
-    
-    return combinations
-
-
-def optimize_parameters(base_params, top_n=5, progress_callback=None):
-    """
-    Optimise les paramètres pour minimiser le temps total
-    
-    Input:
-        - base_params: dict avec les paramètres de base
-        - top_n: nombre de meilleures configurations à retourner
-        - progress_callback: fonction pour mettre à jour la progression
-    
-    Output: liste de tuples (params, temps_total, gain)
-    """
-    # Générer toutes les combinaisons
-    combinations = generate_parameter_combinations(base_params, delta=3, step=1)
-    total_combinations = len(combinations)
-    
-    results = []
-    
-    # Calculer le temps total de base
-    base_schedule, _ = calculer_planning(base_params, silent=True)
-    base_duration = calculate_total_duration(base_schedule) if base_schedule else float('inf')
-    
-    # Tester chaque combinaison
-    for idx, test_params in enumerate(combinations):
-        try:
-            schedule, _ = calculer_planning(test_params, silent=True)
-            if schedule:
-                duration = calculate_total_duration(schedule)
-                gain = base_duration - duration
-                results.append((test_params, duration, gain))
-        except Exception:
-            # Ignorer les combinaisons qui génèrent des erreurs
-            pass
+        terms = [
+            {'name': 'Terrain partagé (Dressage + Saut + 2×Transition)',
+             'value': term_shared,
+             'formula': f"{params['d_dressage']:.1f} + {params['d_saut']:.1f} + 2×{tau:.1f}",
+             'levers': [
+                 {'param': 'd_dressage', 'label': 'Durée Dressage', 'coeff': 1},
+                 {'param': 'd_saut', 'label': 'Durée Saut', 'coeff': 1},
+                 {'param': 'transition_shared', 'label': 'Transition D/S', 'coeff': 2},
+             ]},
+            {'name': 'Cross',
+             'value': term_cross,
+             'formula': f"{params['d_cross']:.1f} + {params['reset_cross']:.1f}",
+             'levers': [
+                 {'param': 'd_cross', 'label': 'Durée Cross', 'coeff': 1},
+                 {'param': 'reset_cross', 'label': 'Reset Cross', 'coeff': 1},
+             ]},
+        ]
+    else:
+        term_dress = params['d_dressage'] + params['reset_dressage']
+        term_cross = params['d_cross'] + params['reset_cross']
+        term_saut = params['d_saut'] + params['reset_saut']
         
-        # Mise à jour de la progression
-        if progress_callback and (idx + 1) % 100 == 0:
-            progress_callback((idx + 1) / total_combinations)
+        terms = [
+            {'name': 'Dressage',
+             'value': term_dress,
+             'formula': f"{params['d_dressage']:.1f} + {params['reset_dressage']:.1f}",
+             'levers': [
+                 {'param': 'd_dressage', 'label': 'Durée Dressage', 'coeff': 1},
+                 {'param': 'reset_dressage', 'label': 'Reset Dressage', 'coeff': 1},
+             ]},
+            {'name': 'Cross',
+             'value': term_cross,
+             'formula': f"{params['d_cross']:.1f} + {params['reset_cross']:.1f}",
+             'levers': [
+                 {'param': 'd_cross', 'label': 'Durée Cross', 'coeff': 1},
+                 {'param': 'reset_cross', 'label': 'Reset Cross', 'coeff': 1},
+             ]},
+            {'name': 'Saut',
+             'value': term_saut,
+             'formula': f"{params['d_saut']:.1f} + {params['reset_saut']:.1f}",
+             'levers': [
+                 {'param': 'd_saut', 'label': 'Durée Saut', 'coeff': 1},
+                 {'param': 'reset_saut', 'label': 'Reset Saut', 'coeff': 1},
+             ]},
+        ]
     
-    # Trier par temps total croissant
-    results.sort(key=lambda x: x[1])
+    # Tri par valeur décroissante
+    terms.sort(key=lambda t: t['value'], reverse=True)
     
-    return results[:top_n], total_combinations, base_duration
+    bottleneck = terms[0]
+    second = terms[1] if len(terms) > 1 else None
+    
+    return {
+        'lambda': bottleneck['value'],
+        'bottleneck': bottleneck,
+        'second': second,
+        'all_terms': terms,
+    }
+
+
+def compute_sensitivity_table(params, bottleneck_info, max_delta=5):
+    """
+    Calcule le tableau de sensibilité : gain par réduction de 1, 2, ... min
+    sur chaque levier du goulot d'étranglement.
+    
+    Détecte le breakpoint où le goulot bascule.
+    
+    Output: dict avec 'rows' (tableau) et 'pause_gain' (levier secondaire)
+    """
+    Q = params['nb_cavaliers']
+    current_lambda = bottleneck_info['lambda']
+    second_value = bottleneck_info['second']['value'] if bottleneck_info['second'] else 0
+    bottleneck = bottleneck_info['bottleneck']
+    
+    rows = []  # liste de dicts pour le tableau
+    
+    for lever in bottleneck['levers']:
+        coeff = lever['coeff']
+        current_param_value = params[lever['param']]
+        
+        for delta in range(1, max_delta + 1):
+            new_param_value = current_param_value - delta
+            if new_param_value < 0:
+                break
+            
+            # Nouveau λ si on réduit ce levier
+            new_lambda = current_lambda - delta * coeff
+            
+            # Le nouveau λ effectif est max(new_lambda, second_value)
+            effective_lambda = max(new_lambda, second_value)
+            
+            # Gain sur λ
+            delta_lambda = current_lambda - effective_lambda
+            
+            # Gain total sur le planning
+            gain_total = (Q - 1) * delta_lambda
+            
+            # Breakpoint détecté ?
+            breakpoint_reached = new_lambda <= second_value
+            
+            rows.append({
+                'lever': lever['label'],
+                'param': lever['param'],
+                'coeff': coeff,
+                'delta': delta,
+                'new_value': new_param_value,
+                'new_lambda': effective_lambda,
+                'delta_lambda': delta_lambda,
+                'gain_total': gain_total,
+                'breakpoint': breakpoint_reached,
+            })
+            
+            # Arrêter après le breakpoint
+            if breakpoint_reached:
+                break
+    
+    # Levier secondaire : pauses (gain constant de 1 min par min réduite)
+    pause_levers = []
+    for pause_name, pause_label in [('d_pause1', 'Pause 1'), ('d_pause2', 'Pause 2')]:
+        current_val = params[pause_name]
+        for delta in range(1, max_delta + 1):
+            new_val = current_val - delta
+            if new_val < 1:  # minimum 1 min
+                break
+            pause_levers.append({
+                'lever': pause_label,
+                'param': pause_name,
+                'delta': delta,
+                'new_value': new_val,
+                'gain_total': delta,  # gain constant
+            })
+    
+    return {
+        'rows': rows,
+        'pause_levers': pause_levers,
+    }
 
 
 # ============================================
@@ -599,10 +633,10 @@ with st.sidebar:
 
     generate_btn = st.button("Générer le Planning", type="primary", use_container_width=True)
     
-    # Bouton d'optimisation (seulement en mode Auto avec shared_arena)
+    # Bouton d'optimisation (en mode Auto)
     optimize_btn = False
-    if mode == "Optimisation Auto" and shared_arena:
-        optimize_btn = st.button("🔍 Suggérer Optimisations", use_container_width=True)
+    if mode == "Optimisation Auto":
+        optimize_btn = st.button("🔍 Diagnostic & Optimisation", use_container_width=True)
 
 # --- CORPS PRINCIPAL ---
 
@@ -665,7 +699,7 @@ if generate_btn:
         st.success(f"Planning généré pour {nb_cavaliers} cavaliers !")
 
 
-# --- OPTIMISATION DES PARAMÈTRES ---
+# --- DIAGNOSTIC & OPTIMISATION (Analyse Max-Plus) ---
 
 if optimize_btn:
     params = {
@@ -678,91 +712,156 @@ if optimize_btn:
     }
     
     st.markdown("---")
-    st.header("🔍 Recherche des configurations optimales")
-    st.info("Analyse en cours... Cette opération peut prendre quelques minutes selon le nombre de combinaisons.")
+    st.header("🔍 Diagnostic & Optimisation (Analyse Max-Plus)")
     
-    # Barre de progression
-    progress_bar = st.progress(0)
-    status_text = st.empty()
+    # --- 1. Calcul du goulot ---
+    info = compute_bottleneck(params)
+    Q = int(nb_cavaliers)
+    lam = info['lambda']
+    bottleneck = info['bottleneck']
+    second = info['second']
     
-    def update_progress(value):
-        progress_bar.progress(value)
-        status_text.text(f"Progression : {value*100:.0f}%")
+    # Pipeline delay (K0) = traversée complète du premier cavalier
+    L_total = d_dressage + d_pause1 + d_cross + d_pause2 + d_saut
+    T_total_estimated = L_total + (Q - 1) * lam
     
-    # Lancer l'optimisation
-    start_opt = time.time()
-    results, total_tested, base_duration = optimize_parameters(params, top_n=5, progress_callback=update_progress)
-    opt_duration = time.time() - start_opt
+    # --- 2. Diagnostic en 1 ligne ---
+    st.error(f"🚧 **Goulot d'étranglement : {bottleneck['name']}** — λ = {lam:.1f} min")
+    st.caption(f"Formule : {bottleneck['formula']} = {bottleneck['value']:.1f} min")
     
-    progress_bar.progress(1.0)
-    status_text.empty()
+    # Afficher tous les termes
+    st.subheader("📊 Valeur propre par étape")
     
-    # Afficher les résultats
-    if results:
-        st.success(f"✅ Optimisation terminée en {opt_duration:.1f}s ({total_tested} configurations testées)")
+    cols = st.columns(len(info['all_terms']))
+    for i, term in enumerate(info['all_terms']):
+        with cols[i]:
+            is_bottleneck = (term == bottleneck)
+            label = "🚧 " + term['name'] if is_bottleneck else term['name']
+            st.metric(label, f"{term['value']:.1f} min")
+            st.caption(term['formula'])
+    
+    # Durée totale estimée
+    st.markdown("---")
+    st.subheader("⏱️ Estimation de la durée totale")
+    st.latex(r"T_{total} = K_0 + (Q-1) \times \lambda = " + f"{L_total:.1f} + {Q-1} \\times {lam:.1f} = {T_total_estimated:.1f}" + r"\text{ min}")
+    
+    hours = int(T_total_estimated // 60)
+    mins = int(T_total_estimated % 60)
+    st.info(f"📐 Durée estimée : **{hours}h{mins:02d}** pour {Q} cavaliers")
+    
+    # --- 3. Tableau de sensibilité (leviers primaires) ---
+    st.markdown("---")
+    st.subheader("🎯 Leviers d'optimisation (réduction du goulot)")
+    
+    sensitivity = compute_sensitivity_table(params, info, max_delta=5)
+    
+    if sensitivity['rows']:
+        # Organiser par levier
+        levers_seen = []
+        for row in sensitivity['rows']:
+            if row['lever'] not in levers_seen:
+                levers_seen.append(row['lever'])
         
-        # Configuration actuelle
-        st.subheader("📊 Configuration actuelle")
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric("Temps total actuel", f"{base_duration:.1f} min")
-        with col2:
-            st.write("**Paramètres actuels:**")
-            st.write(f"- Pause 1: {d_pause1} min")
-            st.write(f"- Pause 2: {d_pause2} min")
-            st.write(f"- Reset Dress: {reset_dressage} min")
-            st.write(f"- Reset Cross: {reset_cross} min")
-            st.write(f"- Reset Saut: {reset_saut} min")
-            st.write(f"- Transition D/S: {transition_shared} min")
-        
+        for lever_name in levers_seen:
+            lever_rows = [r for r in sensitivity['rows'] if r['lever'] == lever_name]
+            coeff = lever_rows[0]['coeff']
+            coeff_text = f" (×{coeff} sur λ)" if coeff > 1 else ""
+            
+            st.markdown(f"**{lever_name}**{coeff_text}")
+            
+            # Construire le tableau
+            table_data = []
+            for r in lever_rows:
+                bp_marker = " ⚠️" if r['breakpoint'] else ""
+                table_data.append({
+                    'Réduction': f"-{r['delta']} min",
+                    'Nouvelle valeur': f"{r['new_value']:.1f} min",
+                    'Nouveau λ': f"{r['new_lambda']:.1f} min",
+                    'Δλ': f"-{r['delta_lambda']:.1f} min",
+                    f'Gain total ({Q} cav.)': f"{r['gain_total']:.1f} min{bp_marker}",
+                })
+            
+            st.table(table_data)
+            
+            # Breakpoint warning
+            bp_rows = [r for r in lever_rows if r['breakpoint']]
+            if bp_rows:
+                bp = bp_rows[0]
+                st.warning(
+                    f"⚠️ Au-delà de -{bp['delta']} min, le goulot bascule vers "
+                    f"**{second['name']}** (λ = {second['value']:.1f} min). "
+                    f"Réduction supplémentaire sans effet sur λ."
+                )
+    
+    # --- 4. Levier secondaire : pauses ---
+    if sensitivity['pause_levers']:
         st.markdown("---")
-        st.subheader("🏆 Top 5 Configurations Optimales")
+        st.subheader("📎 Leviers secondaires (pauses entre épreuves)")
+        st.caption("Réduire une pause gagne exactement la même durée, quel que soit le nombre de cavaliers (offset constant K₀).")
         
-        # Afficher chaque résultat
-        for idx, (opt_params, duration, gain) in enumerate(results, 1):
-            with st.expander(f"#{idx} - Temps: {duration:.1f} min (gain: {gain:.1f} min)", expanded=(idx==1)):
-                col1, col2, col3 = st.columns(3)
-                
-                with col1:
-                    st.write("**Transitions:**")
-                    st.write(f"Pause 1: {opt_params['d_pause1']:.0f} min")
-                    st.write(f"Pause 2: {opt_params['d_pause2']:.0f} min")
-                
-                with col2:
-                    st.write("**Resets:**")
-                    st.write(f"Dressage: {opt_params['reset_dressage']:.0f} min")
-                    st.write(f"Cross: {opt_params['reset_cross']:.0f} min")
-                    st.write(f"Saut: {opt_params['reset_saut']:.0f} min")
-                
-                with col3:
-                    st.write("**Terrain partagé:**")
-                    st.write(f"Transition: {opt_params['transition_shared']:.0f} min")
-                    st.metric("Gain de temps", f"{gain:.1f} min", delta=f"{(gain/base_duration)*100:.1f}%")
-                
-                # Bouton pour appliquer cette configuration
-                if st.button(f"Appliquer cette configuration", key=f"apply_{idx}"):
-                    st.warning("⚠️ Pour appliquer ces paramètres, veuillez les saisir manuellement dans la barre latérale.")
+        pause_names = []
+        for pl in sensitivity['pause_levers']:
+            if pl['lever'] not in pause_names:
+                pause_names.append(pl['lever'])
         
-        # Graphique comparatif
-        st.markdown("---")
-        st.subheader("📈 Comparaison des temps totaux")
+        for pname in pause_names:
+            p_rows = [r for r in sensitivity['pause_levers'] if r['lever'] == pname]
+            current_val = params[p_rows[0]['param']]
+            st.markdown(f"**{pname}** (actuel : {current_val:.1f} min)")
+            
+            table_data = []
+            for r in p_rows:
+                table_data.append({
+                    'Réduction': f"-{r['delta']} min",
+                    'Nouvelle valeur': f"{r['new_value']:.1f} min",
+                    'Gain total': f"{r['gain_total']:.0f} min",
+                })
+            
+            st.table(table_data)
+    
+    # --- 5. Résumé visuel ---
+    st.markdown("---")
+    st.subheader("📈 Impact comparé des leviers")
+    
+    # Collecter tous les gains pour le graphique
+    chart_labels = []
+    chart_gains = []
+    chart_colors = []
+    
+    for row in sensitivity['rows']:
+        label = f"{row['lever']} -{row['delta']}min"
+        chart_labels.append(label)
+        chart_gains.append(row['gain_total'])
+        chart_colors.append('#C00000' if row['breakpoint'] else '#4472C4')
+    
+    for row in sensitivity['pause_levers']:
+        label = f"{row['lever']} -{row['delta']}min"
+        chart_labels.append(label)
+        chart_gains.append(row['gain_total'])
+        chart_colors.append('#548235')
+    
+    if chart_labels:
+        fig_opt, ax_opt = plt.subplots(figsize=(10, max(3, len(chart_labels) * 0.4)))
         
-        fig_comp, ax_comp = plt.subplots(figsize=(10, 4))
+        y_pos = range(len(chart_labels))
+        ax_opt.barh(y_pos, chart_gains, color=chart_colors)
+        ax_opt.set_yticks(y_pos)
+        ax_opt.set_yticklabels(chart_labels, fontsize=9)
+        ax_opt.set_xlabel('Gain total (minutes)')
+        ax_opt.set_title(f'Gain sur la durée totale ({Q} cavaliers)')
+        ax_opt.grid(True, axis='x', alpha=0.3)
+        ax_opt.invert_yaxis()
         
-        config_names = ["Actuel"] + [f"Config #{i+1}" for i in range(len(results))]
-        times = [base_duration] + [r[1] for r in results]
-        colors_bar = ['#FF6B6B'] + ['#51CF66'] * len(results)
+        for i, g in enumerate(chart_gains):
+            ax_opt.text(g + 0.3, i, f'{g:.0f} min', va='center', fontsize=9, fontweight='bold')
         
-        ax_comp.barh(config_names, times, color=colors_bar)
-        ax_comp.set_xlabel('Temps total (minutes)')
-        ax_comp.set_title('Comparaison des configurations')
-        ax_comp.grid(True, axis='x', alpha=0.3)
+        # Légende
+        from matplotlib.patches import Patch
+        legend_elements = [
+            Patch(facecolor='#4472C4', label='Levier primaire (λ)'),
+            Patch(facecolor='#C00000', label='Après breakpoint'),
+            Patch(facecolor='#548235', label='Levier secondaire (K₀)'),
+        ]
+        ax_opt.legend(handles=legend_elements, loc='lower right', fontsize=8)
         
-        # Ajouter les valeurs sur les barres
-        for i, (name, time_val) in enumerate(zip(config_names, times)):
-            ax_comp.text(time_val, i, f' {time_val:.1f} min', 
-                        va='center', fontweight='bold')
-        
-        st.pyplot(fig_comp)
-    else:
-        st.error("❌ Aucune configuration optimale trouvée. Les paramètres actuels sont peut-être déjà optimaux.")
+        st.pyplot(fig_opt)
