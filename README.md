@@ -13,7 +13,7 @@
 ---
 
 ## The Challenge
-Eventing (Concours Complet) is a logistical triathlon. Every rider must complete three phases: **Dressage**, **Cross Country**, and **Show Jumping**, in a strict sequence with fixed rest times.
+Eventing (Concours Complet) is a logistical triathlon. Every rider must complete three phases: Dressage, Cross Country, and Show Jumping, in a strict sequence with fixed rest times.
 
 The complexity explodes due to physical constraints:
 
@@ -31,14 +31,14 @@ The complexity explodes due to physical constraints:
 ## Key Features
 
 ### 1. Intelligent Scheduling 
-Instead of guessing, the algorithm detects the **spectral periodicity** of the competition.
-*   **Conflict-Free Guarantee:** Mathematically ensures no rider ever overlaps on a shared arena.
-*   **$O(1)$ Complexity:** Once the pattern is detected (steady state), generating the schedule for 10 or 10,000 riders takes the same instant time.
+Instead of guessing, the algorithm detects the spectral periodicity of the competition.
+*   Conflict-Free Guarantee: Mathematically ensures no rider ever overlaps on a shared arena.
+*   $O(1)$ Complexity: Once the pattern is detected (steady state), generating the schedule for 10 or 10,000 riders takes the same instant time.
 
 ### 2. Bottleneck Diagnostic 
 The app doesn't just give you a schedule; it tells you *why* it takes that long.
-*   **Analytic Solver:** Identifies exactly which phase is slowing down the whole day (e.g., *"The shared arena transition is costing you 40 minutes total"*).
-*   **Sensitivity Analysis:** Suggests specific optimizations (e.g., *"Reducing the transition by 1 min will save 18 min total"*).
+*   Analytic Solver: Identifies exactly which phase is slowing down the whole day (e.g., *"The shared arena transition is costing you 40 minutes total"*).
+*   Sensitivity Analysis: Suggests specific optimizations (e.g., *"Reducing the transition by 1 min will save 18 min total"*).
 
 ### 3. Visualization & Export
 *   Interactive Gantt Chart (Matplotlib).
@@ -51,7 +51,7 @@ The app doesn't just give you a schedule; it tells you *why* it takes that long.
 The engine operates in three layers:
 
 1.  **Modeling:** The constraints (durations, resets, shared arenas) are converted into a Max-Plus matrix $\mathcal{A}$.
-2.  **Pattern Detection:** The system computes the **eigenvalue** $\lambda$ (cycle time) and **eigenvector** (schedule pattern) of the matrix. It identifies the "steady state" regime where the schedule repeats identically.
+2.  **Pattern Detection:** The system computes the eigenvalue $\lambda$ (cycle time) and eigenvector (schedule pattern) of the matrix. It identifies the "steady state" regime where the schedule repeats identically.
 3.  **Pattern Duplication:** Instead of simulating every rider step-by-step (which is slow and error-prone), the engine duplicates the optimal pattern, applying the calculated time shift $\lambda$.
 
 This approach transforms an NP-hard scheduling problem into a linear algebra problem, solved instantly 
