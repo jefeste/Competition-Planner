@@ -24,7 +24,7 @@ The complexity explodes due to physical constraints:
 | **"Traffic Jam"** (Bottlenecks) | **Eigenvalue:** The system converges to a stable cycle time $\lambda$ (the bottleneck). |
 | **"Optimal Schedule"** | **Spectral Theorem:** The schedule becomes periodic: $x(k+\sigma) = x(k) + \sigma \cdot \lambda$ |
 
-👉 **[Read the Mathematical Proof & Theory](./PREUVE.md)** (Deep dive into the spectral theorem application).
+👉 **[Read the Mathematical Proof & Theory](https://jeremydigard.com/preuve_html/preuve.html)** (Deep dive into the spectral theorem application).
 
 ---
 
